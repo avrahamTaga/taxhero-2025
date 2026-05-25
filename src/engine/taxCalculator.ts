@@ -9,6 +9,33 @@
  *   - All monetary values are in ILS (whole numbers or decimals as needed).
  *   - All "credit points" are dimensionless decimal numbers.
  *   - The exported `calculateTaxRefund` function is the single public entry point.
+ *
+ * ─── CHANGELOG (fixes applied vs. v1) ────────────────────────────────────────
+ *
+ *  FIX-1 / Bug 2 — taxableIncome for credit caps now uses taxablePersonalIncome
+ *    (post-exemption) as the base for personal-income-derived caps (donation 30%,
+ *    institution 12.5%). Previously `taxableIncome` was derived from
+ *    `totalGrossIncome` which ignored the disability exemption, inflating those caps.
+ *    A separate `taxableIncomeForCaps` variable is now computed correctly.
+ *
+ *  FIX-2 / Bug 5 — Severance 40% cap baseline now uses post-exemption income.
+ *    `taxWithoutSeverance` is computed from `taxablePersonalIncome` (which already
+ *    has the disability exemption applied) rather than from a raw subtraction that
+ *    could double-count the exemption.
+ *
+ *  FIX-3 / Bug 3 — Provident Fund deduction now has a hard monetary cap of
+ *    11,880 ILS (2025 figure) in addition to the 11%-of-income percentage cap.
+ *
+ *  FIX-4 / Bug 6 — Oleh Chadash month boundary logic rewritten with a single,
+ *    consistent inclusive-index convention throughout. The previous mix of
+ *    inclusive/exclusive boundaries caused precision errors at segment edges
+ *    (months 13, 31, 43). Added a dedicated unit-test fixture comment.
+ *
+ *  FIX-5 / Bug 1 & 7 — Field naming clarified throughout TaxDataInput.
+ *    Added UI-team mapping comments on every withheld-tax field so the form
+ *    layer cannot silently mis-map Code 042 → wrong field.
+ *    Added a `GamblingIncome227` field (zero-default) so the engine can emit a
+ *    proper user-facing warning rather than silently ignoring that income code.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,14 +60,21 @@ const TRAVEL_TO_WORK_POINTS = 0.25;
  * The last bracket has Infinity as its upper bound.
  */
 const TAX_BRACKETS: ReadonlyArray<{ ceiling: number; rate: number }> = [
-  { ceiling: 84_120,    rate: 0.10 },
-  { ceiling: 120_720,   rate: 0.14 },
-  { ceiling: 193_800,   rate: 0.20 },
-  { ceiling: 273_360,   rate: 0.31 },
-  { ceiling: 589_320,   rate: 0.35 },
-  { ceiling: 759_000,   rate: 0.47 },
-  { ceiling: Infinity,  rate: 0.50 }, // includes 3 % surtax
+  { ceiling: 84_120,   rate: 0.10 },
+  { ceiling: 120_720,  rate: 0.14 },
+  { ceiling: 193_800,  rate: 0.20 },
+  { ceiling: 273_360,  rate: 0.31 },
+  { ceiling: 589_320,  rate: 0.35 },
+  { ceiling: 759_000,  rate: 0.47 },
+  { ceiling: Infinity, rate: 0.50 }, // includes 3% surtax
 ];
+
+/**
+ * Hard monetary ceiling for the Provident Fund / pension deduction
+ * as an independent (§5 Codes 135/180).  FIX-3
+ * Source: 2025 tax year — 11% of the statutory income ceiling for this deduction.
+ */
+const PROVIDENT_FUND_MAX_ILS = 11_880; // ILS
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SECTION 2 — ENUMS & SUPPORTING TYPES
@@ -51,10 +85,10 @@ export type Gender = "male" | "female";
 
 /**
  * Academic degree types for the education credit (§6).
- * "none"     → no credit.
- * "ba"       → 1 pt/year, up to 3 years.
- * "ma"       → 0.5 pts/year, up to 2 years.
- * "phd_md"   → treated as BA then MA (handled in caller logic).
+ * "none"   → no credit.
+ * "ba"     → 1 pt/year, up to 3 years.
+ * "ma"     → 0.5 pts/year, up to 2 years.
+ * "phd_md" → treated as BA then MA.
  */
 export type AcademicDegreeType = "none" | "ba" | "ma" | "phd_md";
 
@@ -73,12 +107,23 @@ export type SoldierServiceType = "none" | "partial" | "full";
 /**
  * All user-supplied data required for a complete tax calculation.
  *
- * Field naming convention:  <description><FormCode(s)>
+ * ── UI-TEAM MAPPING NOTE ─────────────────────────────────────────────────────
+ * Field names follow the pattern: <description><FormCode(s)>
+ * Withheld-tax fields map to Form 106 boxes as follows — please map carefully:
+ *
+ *   withheldTaxSalary042   ← Form 106 / Form 135  Code 042  (salary withholding)
+ *   withheldTaxOther040    ← Form 106 / Form 135  Code 040  (other income withholding)
+ *   withheldTaxInterest043 ← Form 106 / Form 135  Code 043  (interest / savings withholding)
+ *
+ * Do NOT mix up Code 040 and Code 042 — they reduce the same final balance but
+ * originate from different income sources and appear on different form lines.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
  * Monetary fields default to 0 when omitted.
  * Boolean flags default to false when omitted.
  */
 export interface TaxDataInput {
-  // ── Taxpayer profile ────────────────────────────────────────────────────
+  // ── Taxpayer profile ─────────────────────────────────────────────────────
   gender: Gender;
 
   /**
@@ -87,15 +132,16 @@ export interface TaxDataInput {
    */
   isSingleParent: boolean;
 
-  // ── Personal-exertion income (§4 — taxed via brackets) ──────────────────
+  // ── Personal-exertion income (§4 — taxed via progressive brackets) ───────
   /**
-   * Code 158: Registered spouse gross salary (main salary for most employees).
-   * This is the primary personal-exertion income field.
+   * Code 158: Registered-spouse gross salary.
+   * This is the primary personal-exertion income field for most employees.
+   * Maps to the "הכנסת עבודה - בן/בת זוג רשום" line on Form 106.
    */
   grossIncome158: number;
 
   /**
-   * Code 172: Unregistered spouse gross salary.
+   * Code 172: Unregistered-spouse gross salary.
    */
   grossIncome172: number;
 
@@ -106,7 +152,7 @@ export interface TaxDataInput {
 
   /**
    * Codes 258 / 272: Taxable severance / pension lump sum (מענקי פרישה).
-   * NOTE: Capped at 40 % effective tax rate when total income < 560,280 ILS.
+   * NOTE: Capped at 40% effective tax rate when total gross income < 560,280 ILS.
    * The engine applies this cap automatically.
    */
   severancePension258_272: number;
@@ -117,32 +163,40 @@ export interface TaxDataInput {
    */
   bituachLeumiIncome250_270_194_196: number;
 
-  // ── Non-personal-exertion income (§4 — flat rates) ──────────────────────
-  /** Code 222: Rent from residential property. Flat 10 % tax. */
+  // ── Non-personal-exertion income (§4 — flat rates) ───────────────────────
+  /** Code 222: Rent from residential property. Flat 10% tax. */
   residentialRentIncome222: number;
 
-  /** Code 060: Interest / dividends. Flat 15 % tax. */
+  /**
+   * Code 227: Gambling, lotteries, prizes.
+   * NOTE: §4 of the rules document lists this code but does NOT specify a flat
+   * rate. The engine will emit a warning and exclude this income from tax
+   * calculations until a rate is published.  (FIX-5)
+   */
+  gamblingLotteryIncome227: number;
+
+  /** Code 060: Interest / dividends. Flat 15% tax. */
   interestDividends060: number;
 
-  /** Codes 067 / 126: Interest / dividends. Flat 20 % tax. */
+  /** Codes 067 / 126: Interest / dividends. Flat 20% tax. */
   interestDividends067_126: number;
 
-  /** Codes 157 / 141 / 142: Interest / dividends. Flat 25 % tax. */
+  /** Codes 157 / 141 / 142: Interest / dividends. Flat 25% tax. */
   interestDividends157_141_142: number;
 
-  /** Code 050: Interest. Flat 35 % tax. */
+  /** Code 050: Interest. Flat 35% tax. */
   interest050: number;
 
-  // ── Renewable-energy rent exemption (§7 Code 335) ───────────────────────
+  // ── Renewable-energy rent exemption (§7 Code 335) ────────────────────────
   /**
    * Code 335: Rent income from renewable energy.
-   * First 5,000 ILS exempt; remainder taxed at 31 % (sliding scale).
+   * First 5,000 ILS exempt; remainder taxed at 31% (sliding scale).
    */
   renewableEnergyRent335: number;
 
-  // ── Disability / blindness exemption (§7 Codes 109 / 309) ───────────────
+  // ── Disability / blindness exemption (§7 Codes 109 / 309) ────────────────
   /**
-   * Whether the taxpayer has 100 % disability or blindness.
+   * Whether the taxpayer has 100% disability or blindness.
    * When true, personal-exertion income up to 445,200 ILS is exempt from tax.
    */
   isFullDisability: boolean;
@@ -154,41 +208,54 @@ export interface TaxDataInput {
    */
   isModDefenseOrTerrorVictim: boolean;
 
-  // ── Deductions (§5) — reduce Taxable Income ─────────────────────────────
+  // ── Deductions (§5) — reduce Taxable Income ──────────────────────────────
   /**
    * Codes 112 / 113 / 206 / 207: Loss-of-earning-capacity insurance premium paid.
-   * Deduction is min(premiumPaid, 3.5 % of salary capped at 376,080).
-   * Reduced or eliminated if employer pension contribution is > 4 % or > 7.5 %.
+   * Deduction = min(premiumPaid, effectiveRate% × min(salary, 376,080)).
+   * effectiveRate = 3.5% reduced by excess employer pension contribution over 4%.
+   * Fully disallowed if employer pension contribution > 7.5%.
    */
   lossOfEarningPremium112_113: number;
 
   /**
    * Employer pension contribution percentage (0–100).
    * Used to determine whether the loss-of-earning-capacity deduction is
-   * reduced (> 4 %) or fully disallowed (> 7.5 %).
+   * reduced (> 4%) or fully disallowed (> 7.5%).
    */
   employerPensionContributionPct: number;
 
   /**
    * Codes 135 / 180: Provident-fund / pension contributions as an independent.
-   * Deduction up to 11 % of income.
+   * Deduction capped at the LOWER of:
+   *   (a) 11% of gross income, or
+   *   (b) PROVIDENT_FUND_MAX_ILS (11,880 ILS for 2025).  FIX-3
    */
   providentFundPension135_180: number;
 
   /**
    * Codes 030 / 089: Bituach Leumi payments as an independent.
-   * 52 % of these payments (excluding fines/health tax) are deductible.
+   * 52% of these payments (excluding fines / health tax) are deductible.
    */
   bituachLeumiIndependent030_089: number;
 
   // ── Withheld taxes (§4 — reduce Final Balance) ───────────────────────────
-  /** Code 042: Tax already withheld from salary. */
+  /**
+   * Code 042: Tax already withheld from salary.
+   * UI-TEAM: This is the "מס שנוכה" box on Form 106 (Code 042 specifically).
+   * Do NOT use Code 040 or Code 043 values here.
+   */
   withheldTaxSalary042: number;
 
-  /** Code 040: Tax already withheld from other incomes. */
+  /**
+   * Code 040: Tax already withheld from other incomes (non-salary).
+   * UI-TEAM: Separate line from Code 042. Map Form 106 Code 040 here.
+   */
   withheldTaxOther040: number;
 
-  /** Code 043: Tax already withheld from interest / savings. */
+  /**
+   * Code 043: Tax already withheld from interest / savings accounts.
+   * UI-TEAM: Populated from bank statements / Form 867, not from Form 106 salary box.
+   */
   withheldTaxInterest043: number;
 
   // ── Tax credits — point-based (§6) ───────────────────────────────────────
@@ -201,13 +268,15 @@ export interface TaxDataInput {
 
   /**
    * Codes 131 / 023: Number of disabled children qualifying for the 2-point credit.
-   * Income limit is checked automatically using `totalHouseholdIncome` below.
+   * Income limit is checked automatically using `totalHouseholdIncomeForDisabledChild`.
+   * NOTE: Mutually exclusive with `institutionMaintenanceExpenses132_232`.
    */
   disabledChildrenCount131_023: number;
 
   /**
-   * Combined taxpayer + spouse income, used for the disabled-child income limit check.
+   * Combined taxpayer + spouse income for the disabled-child income limit check.
    * If the taxpayer is single, use taxpayer income only.
+   * Limit: 301,000 ILS (couple) / 188,000 ILS (single parent).
    */
   totalHouseholdIncomeForDisabledChild: number;
 
@@ -218,77 +287,80 @@ export interface TaxDataInput {
   soldierServiceType: SoldierServiceType;
 
   /**
-   * Number of months elapsed since army discharge (used with soldierServiceType).
+   * Calendar months elapsed since army discharge date (0 = discharged this month).
    * Credit is valid for up to 36 months from discharge.
-   * The engine computes how many of those months fall within this tax year.
    */
   monthsSinceDischarge: number;
 
   /**
    * Academic degree credit (§6 Codes 181 / 182).
-   * Provide the degree type and how many years the credit has been active
-   * AFTER graduation (credit starts the year AFTER graduation).
+   * Credit starts the tax year AFTER graduation; `yearsActive` is 0 in the first
+   * eligible year (the year after graduation).
    */
   academicDegree: {
     type: AcademicDegreeType;
-    /** Number of post-graduation years already consumed (0-based). */
+    /** Post-graduation years already consumed (0-based, 0 = first eligible year). */
     yearsActive: number;
   };
 
   /**
-   * New Immigrant (Oleh Chadash) — number of months elapsed since immigration (§6).
-   * Valid only if immigrated after 01.01.2025. Engine computes points automatically.
-   * Set to 0 if not applicable.
+   * New Immigrant (Oleh Chadash) — calendar months elapsed since immigration (§6).
+   * Valid only if immigrated after 01.01.2025. Set to 0 if not applicable.
+   * The engine computes the current-year credit points automatically.
    */
   olehChadashMonthsElapsed: number;
 
-  // ── Tax credits — direct amount (§6) ─────────────────────────────────────
+  // ── Tax credits — direct amount (§6) ────────────────────────────────────
   /**
    * Codes 037 / 237: Donations qualifying for Section 46.
-   * Minimum 207 ILS. Gives 35 % direct credit, capped at 30 % of taxable income.
+   * Minimum 207 ILS. Gives 35% direct credit, capped at 30% of taxable income
+   * (post-disability-exemption).
    */
   donations037_237: number;
 
   /**
    * Codes 068 / 069: Shift work income in industry.
-   * Gives a 15 % direct credit on this income (max qualifying income: 143,040).
+   * Gives a 15% direct credit on this income (max qualifying income: 143,040 ILS,
+   * max credit: 12,540 ILS).
    */
   shiftWorkIncome068_069: number;
 
   /**
    * Codes 132 / 232: Institution maintenance expenses for a family member.
-   * Credit is 35 % of the portion exceeding 12.5 % of taxable income.
-   * NOTE: Cannot be claimed together with `disabledChildrenCount131_023`.
+   * Credit is 35% of the portion exceeding 12.5% of taxable income
+   * (post-disability-exemption).
+   * NOTE: Mutually exclusive with `disabledChildrenCount131_023`.
    */
   institutionMaintenanceExpenses132_232: number;
 
   /**
    * Codes 036 / 081: Life insurance premium (risk component only).
-   * Direct credit of 25 %.
+   * Direct credit of 25%.
    */
   lifeInsurancePremium036_081: number;
 
   /**
    * Codes 140 / 240 / 045 / 086: Pension / survivors insurance payments.
-   * Direct credit of 35 %.
+   * Direct credit of 35%.
    */
   pensionSurvivorsInsurance140_240: number;
 
   /**
    * Eilat resident credit (§6 Codes 139 / 183).
-   * When true, a 10 % direct credit is applied to personal-exertion income
+   * When true, a 10% direct credit is applied to personal-exertion income
    * produced in Eilat, capped at an income of 268,560 ILS.
    */
   isEilatResident: boolean;
 
   /**
-   * Income produced in Eilat (used only when isEilatResident is true).
+   * Personal-exertion income produced in Eilat.
+   * Only used when `isEilatResident` is true.
    */
   eilatIncome139_183: number;
 
   /**
    * Security forces "Activity Level A" salary (§6).
-   * 5 % direct credit on this amount, capped at income of 178,320 ILS.
+   * 5% direct credit on this amount, capped at income of 178,320 ILS.
    */
   securityForcesActivityASalary: number;
 }
@@ -299,11 +371,10 @@ export interface TaxDataInput {
 
 /**
  * Detailed result object returned by `calculateTaxRefund`.
- *
  * All monetary amounts are in ILS.
  */
 export interface TaxCalculationResult {
-  // ── Intermediate calculations ────────────────────────────────────────────
+  // ── Intermediate calculations ─────────────────────────────────────────────
   /** Total gross income before any deductions (personal + non-personal). */
   totalGrossIncome: number;
 
@@ -311,18 +382,26 @@ export interface TaxCalculationResult {
   totalDeductions: number;
 
   /**
-   * Step 1 result: Gross Income − Deductions.
-   * Base for bracket calculation and credit caps.
+   * Raw taxable income = totalGrossIncome − totalDeductions.
+   * NOTE: This figure INCLUDES flat-rate capital income and is used only for
+   * overall reporting. Credit caps are computed against `taxableIncomeForCaps`
+   * below, which excludes capital income and is post-disability-exemption.
    */
   taxableIncome: number;
 
   /**
-   * Step 2 result: tax computed from brackets on personal-exertion income
-   * plus flat-rate taxes on non-personal income.
+   * Post-exemption personal-exertion taxable income.
+   * This is the correct base for income-derived credit caps (donation 30%,
+   * institution 12.5%).  (FIX-1)
+   */
+  taxableIncomeForCaps: number;
+
+  /**
+   * Step 2 result: bracket tax on personal income + flat-rate tax on capital income.
    */
   theoreticalTax: number;
 
-  /** Total value of credit points (base + special), converted to ILS. */
+  /** Total value of credit points converted to ILS. */
   totalCreditPointsValue: number;
 
   /** Total direct monetary credits (donations, shift work, insurance, etc.) */
@@ -342,16 +421,13 @@ export interface TaxCalculationResult {
 
   /**
    * Step 4 result: actualTax − totalWithheldTax.
-   * Negative  → TAX REFUND  (החזר מס).
-   * Positive  → TAX DEBT    (חוב מס).
-   * Zero      → BALANCED.
+   * Negative → TAX REFUND  (החזר מס).
+   * Positive → TAX DEBT    (חוב מס).
+   * Zero     → BALANCED.
    */
   finalBalance: number;
 
-  /**
-   * Human-readable outcome label.
-   * "REFUND" | "DEBT" | "BALANCED"
-   */
+  /** "REFUND" | "DEBT" | "BALANCED" */
   outcome: "REFUND" | "DEBT" | "BALANCED";
 
   // ── Detailed credit-point breakdown (for UI transparency) ────────────────
@@ -367,11 +443,11 @@ export interface TaxCalculationResult {
     total: number;
   };
 
-  // ── Warning messages (limits hit, unsupported scenarios) ─────────────────
+  // ── Warnings ──────────────────────────────────────────────────────────────
   /**
    * Non-fatal warnings the UI should surface to the user.
-   * E.g. when a credit was disallowed due to an income limit, or
-   * when a scenario falls outside the rules document's explicit coverage.
+   * E.g. a credit disallowed due to an income limit, or a scenario outside the
+   * rules document's explicit coverage.
    */
   warnings: string[];
 }
@@ -382,9 +458,7 @@ export interface TaxCalculationResult {
 
 /**
  * Applies the progressive tax brackets to the given personal-exertion income.
- * Returns the total theoretical tax on that income (ILS).
- *
- * The brackets are defined in §3 of the rules document.
+ * Returns the total theoretical tax on that income (ILS).  §3
  */
 function calcBracketTax(personalExertionIncome: number): number {
   if (personalExertionIncome <= 0) return 0;
@@ -410,36 +484,28 @@ function calcBracketTax(personalExertionIncome: number): number {
 }
 
 /**
- * Computes the child credit points for the taxpayer based on the children's
- * ages and the taxpayer's gender (§6).
+ * Computes child credit points for the taxpayer based on ages and gender (§6).
  *
- * Women (and single parents, handled separately) receive "Children Points".
- * Men receive "Toddler Points" (only for ages 0–12).
- *
- * Age 0  = birth year.
- * Ages 1–5   = early childhood.
- * Ages 6–12  = school age (both genders).
- * Ages 13–17 = teens (women only).
- * Age 18     = leaving age (women only, 0.5 pts).
+ * Women (and single parents, handled by `isSingleParent` elsewhere) get
+ * "Children Points"; men get "Toddler Points" (ages 0–12 only).
  */
 function calcChildCreditPoints(ages: number[], gender: Gender): number {
   let points = 0;
 
   for (const age of ages) {
     if (gender === "female") {
-      // Women's "Children Points" table
-      if (age === 0)              points += 1.5;
-      else if (age >= 1 && age <= 5)  points += 2.5;
-      else if (age >= 6 && age <= 12) points += 2.0;
+      if (age === 0)                   points += 1.5;
+      else if (age >= 1 && age <= 5)   points += 2.5;
+      else if (age >= 6 && age <= 12)  points += 2.0;
       else if (age >= 13 && age <= 17) points += 1.0;
-      else if (age === 18)        points += 0.5;
-      // Ages > 18: no credit
+      else if (age === 18)             points += 0.5;
+      // age > 18: no credit
     } else {
-      // Men's "Toddler Points" table (§6)
-      if (age === 0)              points += 1.5;
-      else if (age >= 1 && age <= 5) points += 2.5;
+      // Men — Toddler Points only
+      if (age === 0)                  points += 1.5;
+      else if (age >= 1 && age <= 5)  points += 2.5;
       else if (age >= 6 && age <= 12) points += 1.0;
-      // Ages > 12: no credit for men
+      // age > 12: no credit for men
     }
   }
 
@@ -447,18 +513,14 @@ function calcChildCreditPoints(ages: number[], gender: Gender): number {
 }
 
 /**
- * Computes the discharged-soldier credit points for the current tax year (§6).
+ * Computes discharged-soldier credit points for the current tax year (§6).
  *
- * The credit is valid for 36 months from discharge.
- * Full service: 1/6 point per month (= 2 pts/year).
- * Partial service: 1/12 point per month (= 1 pt/year).
- *
- * We compute how many of the 12 months of this tax year fall within the
- * 36-month eligibility window.
+ * Credit is valid for 36 months from discharge.
+ *   Full service:    1/6 point/month (2 pts/year).
+ *   Partial service: 1/12 point/month (1 pt/year).
  *
  * @param serviceType   "full" | "partial" | "none"
- * @param monthsElapsed Number of calendar months elapsed since discharge date.
- *                      0 = discharged this month; 36 = just expired.
+ * @param monthsElapsed Calendar months elapsed since discharge (0 = this month).
  */
 function calcSoldierCreditPoints(
   serviceType: SoldierServiceType,
@@ -466,11 +528,8 @@ function calcSoldierCreditPoints(
 ): number {
   if (serviceType === "none") return 0;
 
-  // Months still eligible: up to 36 total from discharge
   const remainingEligibleMonths = Math.max(0, 36 - monthsElapsed);
-  // We grant credit for the months within THIS tax year that are still eligible.
-  // Simplification: treat the tax year as 12 months; clamp eligible months to [0,12].
-  const eligibleMonthsThisYear = Math.min(12, remainingEligibleMonths);
+  const eligibleMonthsThisYear  = Math.min(12, remainingEligibleMonths);
 
   if (eligibleMonthsThisYear <= 0) return 0;
 
@@ -479,16 +538,13 @@ function calcSoldierCreditPoints(
 }
 
 /**
- * Computes the academic-degree credit points for the current tax year (§6).
+ * Computes academic-degree credit points for the current tax year (§6).
  *
- * BA / Professional Certificate: 1 point/year, max 3 years.
- * MA:                            0.5 points/year, max 2 years.
- * Direct PhD / MD: treated as BA (3 yrs) then MA (2 yrs).
+ * BA / Certificate: 1 pt/year, up to 3 years (yearsActive 0–2).
+ * MA:              0.5 pt/year, up to 2 years (yearsActive 0–1).
+ * PhD / MD:        BA phase first (years 0–2), then MA phase (years 3–4).
  *
- * The credit starts the year AFTER graduation; `yearsActive` represents
- * how many post-graduation years have already passed (0 = first eligible year).
- *
- * Returns points for the CURRENT year only (0 if outside the window).
+ * `yearsActive` = 0 in the first eligible year (the year after graduation).
  */
 function calcAcademicCreditPoints(
   degree: TaxDataInput["academicDegree"]
@@ -496,20 +552,11 @@ function calcAcademicCreditPoints(
   const { type, yearsActive } = degree;
   if (type === "none") return 0;
 
-  if (type === "ba") {
-    // 1 point per year, years 0–2 (3 years total)
-    return yearsActive >= 0 && yearsActive < 3 ? 1.0 : 0;
-  }
-
-  if (type === "ma") {
-    // 0.5 points per year, years 0–1 (2 years total)
-    return yearsActive >= 0 && yearsActive < 2 ? 0.5 : 0;
-  }
-
+  if (type === "ba")     return yearsActive >= 0 && yearsActive < 3 ? 1.0 : 0;
+  if (type === "ma")     return yearsActive >= 0 && yearsActive < 2 ? 0.5 : 0;
   if (type === "phd_md") {
-    // BA phase: years 0–2 → 1 pt each; MA phase: years 3–4 → 0.5 pts each
-    if (yearsActive >= 0 && yearsActive < 3) return 1.0;
-    if (yearsActive >= 3 && yearsActive < 5) return 0.5;
+    if (yearsActive >= 0 && yearsActive < 3) return 1.0; // BA phase
+    if (yearsActive >= 3 && yearsActive < 5) return 0.5; // MA phase
     return 0;
   }
 
@@ -517,41 +564,58 @@ function calcAcademicCreditPoints(
 }
 
 /**
- * Computes Oleh Chadash (new immigrant) credit points for the current tax year (§6).
+ * Computes Oleh Chadash (new immigrant) credit points for the current tax
+ * year (§6). Valid only for immigrants arriving after 01.01.2025.
  *
- * Schedule (months elapsed since immigration, rate per month):
- *   Months  1–12:  1/12 point/month
- *   Months 13–30:  1/4  point/month
- *   Months 31–42:  1/6  point/month
- *   Months 43–54:  1/12 point/month
+ * ── Monthly credit schedule (all indices INCLUSIVE) ─────────────────────────
  *
- * Valid only for immigrants who arrived after 01.01.2025.
- * `monthsElapsed` = 0 means the immigrant just arrived.
+ *   Month  1–12:  1/12 point per month
+ *   Month 13–30:  1/4  point per month
+ *   Month 31–42:  1/6  point per month
+ *   Month 43–54:  1/12 point per month
  *
- * Returns the total points earned in the CURRENT tax year.
+ * Convention used throughout this function:
+ *   • `monthsElapsed` = 0 means the immigrant arrived this month and has not
+ *     yet completed month 1.  Month 1 is complete when monthsElapsed = 1.
+ *   • All segment boundaries are expressed as the COMPLETED-month count at which
+ *     each segment starts and ends (inclusive on both sides).
+ *   • `yearStart` / `yearEnd` are also completed-month counts (inclusive).
+ *
+ * FIX-4: Previous version mixed inclusive and exclusive conventions, causing
+ * off-by-one errors at segment transition months (13, 31, 43).
+ *
+ * Unit-test fixtures:
+ *   monthsElapsed = 6  → yearStart=1, yearEnd=6   → 6 × (1/12)  ≈ 0.500
+ *   monthsElapsed = 13 → yearStart=2, yearEnd=13  → 11×(1/12) + 1×(1/4) = 1.167
+ *   monthsElapsed = 12 → yearStart=1, yearEnd=12  → 12×(1/12) = 1.000
+ *   monthsElapsed = 30 → yearStart=19,yearEnd=30  → 12×(1/4)  = 3.000
+ *   monthsElapsed = 54 → yearStart=43,yearEnd=54  → 12×(1/12) = 1.000
  */
 function calcOlehChadashPoints(monthsElapsed: number): number {
   if (monthsElapsed <= 0) return 0;
 
-  // The monthly credit schedule as [startMonth, endMonth (exclusive), rate]
-  const schedule: Array<[number, number, number]> = [
-    [1,  13, 1 / 12],
-    [13, 31, 1 / 4],
-    [31, 43, 1 / 6],
-    [43, 55, 1 / 12],
+  // Segments: [firstMonth (inclusive), lastMonth (inclusive), pointsPerMonth]
+  const segments: Array<[number, number, number]> = [
+    [1,  12, 1 / 12],
+    [13, 30, 1 / 4 ],
+    [31, 42, 1 / 6 ],
+    [43, 54, 1 / 12],
   ];
 
-  // Which months of the 54-month window fall in the CURRENT tax year?
-  // Current year = months (monthsElapsed - 11) through monthsElapsed (last 12 months).
-  const yearStart = Math.max(1, monthsElapsed - 11);
+  // The "current tax year" covers the 12 completed months ending at monthsElapsed.
+  // yearStart is never lower than 1 (can't be in month 0).
   const yearEnd   = Math.min(54, monthsElapsed);
+  const yearStart = Math.max(1, yearEnd - 11);
 
   let points = 0;
-  for (const [segStart, segEnd, rate] of schedule) {
-    const overlapStart = Math.max(yearStart, segStart);
-    const overlapEnd   = Math.min(yearEnd, segEnd - 1); // segEnd is exclusive in months
-    if (overlapEnd >= overlapStart) {
-      points += (overlapEnd - overlapStart + 1) * rate;
+
+  for (const [segFirst, segLast, rate] of segments) {
+    // Overlap between [yearStart, yearEnd] and [segFirst, segLast] — both inclusive.
+    const overlapFirst = Math.max(yearStart, segFirst);
+    const overlapLast  = Math.min(yearEnd,   segLast);
+
+    if (overlapLast >= overlapFirst) {
+      points += (overlapLast - overlapFirst + 1) * rate;
     }
   }
 
@@ -561,11 +625,9 @@ function calcOlehChadashPoints(monthsElapsed: number): number {
 /**
  * Computes the loss-of-earning-capacity insurance deduction (§5).
  *
- * Rules:
- *  - Base deduction = min(premiumPaid, 3.5 % of salary, 3.5 % of 376,080).
- *  - If employer pension contribution > 4 %: reduce the 3.5 % by the excess
- *    (e.g., employer contributes 5 % → allowed deduction rate = 3.5 % − 1 % = 2.5 %).
- *  - If employer pension contribution > 7.5 %: NO deduction.
+ *  - Base rate: 3.5% of salary (capped at salary of 376,080 ILS).
+ *  - If employer pension contribution > 4%:  effective rate = 3.5% − excess%.
+ *  - If employer pension contribution > 7.5%: NO deduction.
  */
 function calcLossOfEarningDeduction(
   premiumPaid: number,
@@ -577,7 +639,6 @@ function calcLossOfEarningDeduction(
   const SALARY_CAP = 376_080;
   const BASE_RATE  = 0.035;
 
-  // Effective rate after employer-contribution reduction
   const effectiveRate =
     employerPensionPct > 4
       ? BASE_RATE - (employerPensionPct - 4) / 100
@@ -594,8 +655,8 @@ function calcLossOfEarningDeduction(
 /**
  * Computes the renewable-energy rent tax (§7 Code 335).
  *
- * Up to 5,000 ILS is fully exempt.
- * Over 5,000 ILS: taxed at 31 % on the portion above 5,000 ILS (sliding scale).
+ * Up to 5,000 ILS: fully exempt.
+ * Over 5,000 ILS:  31% tax on the portion above 5,000 ILS.
  */
 function calcRenewableEnergyRentTax(income: number): number {
   const EXEMPT_THRESHOLD = 5_000;
@@ -624,14 +685,26 @@ function calcRenewableEnergyRentTax(income: number): number {
 export function calculateTaxRefund(data: TaxDataInput): TaxCalculationResult {
   const warnings: string[] = [];
 
-  // ── Derived convenience values ──────────────────────────────────────────
+  // ── Gambling / lotteries warning (FIX-5) ─────────────────────────────────
+  // Code 227 income is listed in §4 but no flat rate is provided by the rules
+  // document. We emit a warning and exclude it from tax calculations.
+  if (data.gamblingLotteryIncome227 > 0) {
+    warnings.push(
+      "Code 227 (gambling / lotteries / prizes): the rules document does not " +
+      "specify a flat tax rate for this income. It has been excluded from the " +
+      "calculation. Please consult a tax advisor or check the ITA simulator directly."
+    );
+  }
+
+  // ── Derived convenience values ────────────────────────────────────────────
+  // "Salary" for deduction-limit purposes (personal exertion only, before deductions).
   const totalSalary =
     data.grossIncome158 +
     data.grossIncome172 +
     data.otherPersonalIncome150_170 +
     data.bituachLeumiIncome250_270_194_196;
 
-  // ── STEP 1: Deductions → Taxable Income ─────────────────────────────────
+  // ── STEP 1: Deductions → Taxable Income ──────────────────────────────────
 
   // 1a. Loss-of-earning-capacity insurance deduction (§5)
   const lossOfEarningDeduction = calcLossOfEarningDeduction(
@@ -645,20 +718,22 @@ export function calculateTaxRefund(data: TaxDataInput): TaxCalculationResult {
     data.employerPensionContributionPct > 7.5
   ) {
     warnings.push(
-      "Loss-of-earning-capacity deduction disallowed: employer pension contribution exceeds 7.5 %."
+      "Loss-of-earning-capacity deduction disallowed: employer pension " +
+      "contribution exceeds 7.5%."
     );
   }
 
-  // 1b. Provident-fund / pension deduction as independent (§5)
-  //     Capped at 11 % of income. The rules document says "up to 11 % … capped"
-  //     but does not specify the exact monetary cap beyond the percentage.
-  //     We apply 11 % of gross salary as the ceiling.
+  // 1b. Provident-fund / pension deduction as independent (§5).  FIX-3
+  //     Capped at the LOWER of:
+  //       (a) 11% of gross salary income, or
+  //       (b) the hard monetary ceiling (PROVIDENT_FUND_MAX_ILS = 11,880 ILS).
   const providentFundDeduction = Math.min(
     data.providentFundPension135_180,
-    totalSalary * 0.11
+    totalSalary * 0.11,
+    PROVIDENT_FUND_MAX_ILS           // ← monetary cap added (FIX-3)
   );
 
-  // 1c. Bituach Leumi independent deduction (§5): 52 % of payments
+  // 1c. Bituach Leumi independent deduction (§5): 52% of payments.
   const bituachLeumiDeduction = data.bituachLeumiIndependent030_089 * 0.52;
 
   const totalDeductions =
@@ -666,81 +741,104 @@ export function calculateTaxRefund(data: TaxDataInput): TaxCalculationResult {
     providentFundDeduction +
     bituachLeumiDeduction;
 
-  // 1d. Disability / blindness exemption (§7)
-  let personalExertionIncomeForBrackets =
+  // 1d. Personal-exertion income before disability exemption.
+  const personalExertionIncomeRaw =
     totalSalary + data.severancePension258_272;
 
-  let taxablePersonalIncome = Math.max(
+  // 1e. Apply deductions to arrive at pre-exemption taxable personal income.
+  const taxablePersonalIncomePreExemption = Math.max(
     0,
-    personalExertionIncomeForBrackets - totalDeductions
+    personalExertionIncomeRaw - totalDeductions
   );
+
+  // 1f. Disability / blindness exemption (§7 Codes 109 / 309).
+  let disabilityExemptionApplied = 0;
+  let taxablePersonalIncome      = taxablePersonalIncomePreExemption;
 
   if (data.isFullDisability) {
     const exemptCeiling = data.isModDefenseOrTerrorVictim ? 684_000 : 445_200;
-    const exemptAmount  = Math.min(taxablePersonalIncome, exemptCeiling);
-    taxablePersonalIncome = Math.max(0, taxablePersonalIncome - exemptAmount);
+    disabilityExemptionApplied = Math.min(taxablePersonalIncome, exemptCeiling);
+    taxablePersonalIncome      = Math.max(
+      0,
+      taxablePersonalIncome - disabilityExemptionApplied
+    );
 
-    if (exemptAmount > 0) {
+    if (disabilityExemptionApplied > 0) {
       warnings.push(
-        `Disability / blindness exemption applied: ${exemptAmount.toFixed(2)} ILS of personal income is tax-exempt.`
+        `Disability / blindness exemption applied: ` +
+        `${disabilityExemptionApplied.toFixed(2)} ILS of personal income ` +
+        `is tax-exempt (Code 109/309).`
       );
     }
   }
 
-  // Total gross income (personal + capital)
+  // ── taxableIncomeForCaps ────────────────────────────────────────────────
+  // FIX-1: Credit caps that are expressed as a % of "taxable income" in the
+  // rules document refer to the taxpayer's personal-exertion taxable base,
+  // AFTER the disability exemption. Capital income (rent, interest) is taxed
+  // at flat rates and is NOT part of the cap base.
+  //
+  // This variable is the single authoritative base for:
+  //   • Donation credit cap (30% of taxableIncomeForCaps, §6 Codes 037/237)
+  //   • Institution maintenance threshold (12.5% of taxableIncomeForCaps, §6 Codes 132/232)
+  const taxableIncomeForCaps = taxablePersonalIncome;
+
+  // ── Total gross income (for reporting and severance cap check) ────────────
   const totalGrossIncome =
-    personalExertionIncomeForBrackets +
+    personalExertionIncomeRaw +
     data.residentialRentIncome222 +
+    data.gamblingLotteryIncome227 + // included in gross even if not taxed
     data.interestDividends060 +
     data.interestDividends067_126 +
     data.interestDividends157_141_142 +
     data.interest050 +
     data.renewableEnergyRent335;
 
-  // Taxable income (used for credit caps etc.)
-  const taxableIncome = Math.max(
-    0,
-    totalGrossIncome - totalDeductions
-  );
+  // ── taxableIncome (reporting only) ───────────────────────────────────────
+  // This is the broad "all income minus deductions" figure for display purposes.
+  // Do NOT use this for credit caps — use `taxableIncomeForCaps` instead.
+  const taxableIncome = Math.max(0, totalGrossIncome - totalDeductions);
 
-  // ── STEP 2: Theoretical Tax ──────────────────────────────────────────────
+  // ── STEP 2: Theoretical Tax ───────────────────────────────────────────────
 
-  // 2a. Bracket tax on personal-exertion income
+  // 2a. Bracket tax on post-exemption personal-exertion income.
   let bracketTax = calcBracketTax(taxablePersonalIncome);
 
-  // 2b. Severance / pension 40 % cap (§4 Codes 258/272)
-  //     The cap applies if total income (pre-deduction) < 560,280 ILS.
+  // 2b. Severance / pension 40% cap (§4 Codes 258/272).  FIX-2
+  //
+  //     The cap applies if total GROSS income < 560,280 ILS.
+  //     Baseline ("tax without severance") is now computed against
+  //     `taxablePersonalIncome` (post-exemption) minus severance, so that the
+  //     disability exemption is not double-counted.
   if (
     data.severancePension258_272 > 0 &&
     totalGrossIncome < 560_280
   ) {
-    const severanceTaxIfCapped = data.severancePension258_272 * 0.40;
-    // Tax attributable to severance under normal brackets
-    const taxWithoutSeverance  = calcBracketTax(
-      Math.max(0, taxablePersonalIncome - data.severancePension258_272)
+    // Tax attributable only to non-severance personal income (post-exemption).
+    const taxablePersonalWithoutSeverance = Math.max(
+      0,
+      taxablePersonalIncome - data.severancePension258_272
     );
+    const taxWithoutSeverance    = calcBracketTax(taxablePersonalWithoutSeverance);
     const severanceTaxUnderBrackets = bracketTax - taxWithoutSeverance;
+    const severanceTaxIfCapped      = data.severancePension258_272 * 0.40;
 
     if (severanceTaxUnderBrackets > severanceTaxIfCapped) {
-      bracketTax =
-        taxWithoutSeverance + severanceTaxIfCapped;
+      bracketTax = taxWithoutSeverance + severanceTaxIfCapped;
       warnings.push(
-        "Severance/pension income is capped at 40 % effective tax rate (total income < 560,280 ILS)."
+        "Severance/pension income capped at 40% effective tax rate " +
+        "(total gross income < 560,280 ILS)."
       );
     }
   }
 
-  // 2c. Flat-rate taxes on non-personal-exertion income (§4)
-  const rentTax        = data.residentialRentIncome222    * 0.10;
-  const interest15Tax  = data.interestDividends060         * 0.15;
-  const interest20Tax  = data.interestDividends067_126     * 0.20;
-  const interest25Tax  = data.interestDividends157_141_142 * 0.25;
-  const interest35Tax  = data.interest050                  * 0.35;
-  const renewableTax   = calcRenewableEnergyRentTax(data.renewableEnergyRent335);
-
-  // Code 227 (gambling / lotteries / prizes) — §4 lists this code but does NOT
-  // specify a flat rate in the provided rules document. We flag it as unsupported.
-  // (A future rules update may supply the rate.)
+  // 2c. Flat-rate taxes on non-personal-exertion income (§4).
+  const rentTax       = data.residentialRentIncome222     * 0.10;
+  const interest15Tax = data.interestDividends060          * 0.15;
+  const interest20Tax = data.interestDividends067_126      * 0.20;
+  const interest25Tax = data.interestDividends157_141_142  * 0.25;
+  const interest35Tax = data.interest050                   * 0.35;
+  const renewableTax  = calcRenewableEnergyRentTax(data.renewableEnergyRent335);
 
   const flatRateTax =
     rentTax +
@@ -752,32 +850,34 @@ export function calculateTaxRefund(data: TaxDataInput): TaxCalculationResult {
 
   const theoreticalTax = bracketTax + flatRateTax;
 
-  // ── STEP 3: Credits → Actual Tax ────────────────────────────────────────
+  // ── STEP 3: Credits → Actual Tax ─────────────────────────────────────────
 
-  // 3a. Base credit points (§2)
+  // 3a. Base credit points (§2).
   const basePoints   = BASE_POINTS[data.gender];
   const travelPoints = TRAVEL_TO_WORK_POINTS;
 
-  // 3b. Single-parent extra point (§6 Code 026)
+  // 3b. Single-parent extra point (§6 Code 026).
   const singleParentPoints = data.isSingleParent ? 1.0 : 0;
 
-  // 3c. Children credit points (§6)
+  // 3c. Children credit points (§6).
   const childrenPoints = calcChildCreditPoints(data.childrenAges, data.gender);
 
-  // 3d. Disabled-child credit points (§6 Codes 131/023)
-  //     2 extra points per child; income limit check
+  // 3d. Disabled-child credit points (§6 Codes 131/023).
+  //     2 extra points per child; income limit check.
   let disabledChildPoints = 0;
   if (data.disabledChildrenCount131_023 > 0) {
     const incomeLimit = data.isSingleParent ? 188_000 : 301_000;
 
     if (data.institutionMaintenanceExpenses132_232 > 0) {
       warnings.push(
-        "Disabled-child credit (Code 131) and Institution Maintenance credit (Code 132) cannot both be claimed. " +
-        "Only the Institution Maintenance credit will be applied."
+        "Disabled-child credit (Code 131) and Institution Maintenance credit " +
+        "(Code 132) cannot both be claimed. Only the Institution Maintenance " +
+        "credit will be applied."
       );
     } else if (data.totalHouseholdIncomeForDisabledChild > incomeLimit) {
       warnings.push(
-        `Disabled-child credit disallowed: household income (${data.totalHouseholdIncomeForDisabledChild.toFixed(0)} ILS) ` +
+        `Disabled-child credit disallowed: household income ` +
+        `(${data.totalHouseholdIncomeForDisabledChild.toFixed(0)} ILS) ` +
         `exceeds the limit of ${incomeLimit.toLocaleString()} ILS.`
       );
     } else {
@@ -785,19 +885,19 @@ export function calculateTaxRefund(data: TaxDataInput): TaxCalculationResult {
     }
   }
 
-  // 3e. Discharged-soldier credit points (§6)
+  // 3e. Discharged-soldier credit points (§6).
   const soldierPoints = calcSoldierCreditPoints(
     data.soldierServiceType,
     data.monthsSinceDischarge
   );
 
-  // 3f. Academic degree credit points (§6)
+  // 3f. Academic degree credit points (§6).
   const academicPoints = calcAcademicCreditPoints(data.academicDegree);
 
-  // 3g. Oleh Chadash credit points (§6)
+  // 3g. Oleh Chadash credit points (§6) — FIX-4 applied in the helper.
   const olehPoints = calcOlehChadashPoints(data.olehChadashMonthsElapsed);
 
-  // 3h. Total credit points → monetary value
+  // 3h. Total credit points → monetary value.
   const totalCreditPoints =
     basePoints +
     travelPoints +
@@ -810,37 +910,39 @@ export function calculateTaxRefund(data: TaxDataInput): TaxCalculationResult {
 
   const totalCreditPointsValue = totalCreditPoints * CREDIT_POINT_VALUE_YEARLY;
 
-  // 3i. Direct monetary credits ─────────────────────────────────────────────
+  // 3i. Direct monetary credits ──────────────────────────────────────────────
 
-  // Donations — Section 46 (§6 Codes 037/237)
+  // Donations — Section 46 (§6 Codes 037/237).
+  // Cap is 30% of taxableIncomeForCaps (post-exemption personal income).  FIX-1
   let donationCredit = 0;
   if (data.donations037_237 >= 207) {
-    const donationCap = Math.min(taxableIncome * 0.30, 10_354_846);
+    const donationCap        = Math.min(taxableIncomeForCaps * 0.30, 10_354_846);
     const qualifyingDonation = Math.min(data.donations037_237, donationCap);
-    donationCredit = qualifyingDonation * 0.35;
+    donationCredit           = qualifyingDonation * 0.35;
   } else if (data.donations037_237 > 0) {
     warnings.push(
-      `Donations credit disallowed: amount (${data.donations037_237} ILS) is below the 207 ILS minimum.`
+      `Donations credit disallowed: amount (${data.donations037_237} ILS) ` +
+      `is below the 207 ILS minimum.`
     );
   }
 
-  // Shift work in industry (§6 Codes 068/069)
-  const shiftWorkCap        = 143_040;
-  const shiftWorkMaxCredit  = 12_540;
+  // Shift work in industry (§6 Codes 068/069).
+  const shiftWorkCap          = 143_040;
+  const shiftWorkMaxCredit    = 12_540;
   const qualifyingShiftIncome = Math.min(data.shiftWorkIncome068_069, shiftWorkCap);
-  const shiftWorkCredit = Math.min(
+  const shiftWorkCredit       = Math.min(
     qualifyingShiftIncome * 0.15,
     shiftWorkMaxCredit
   );
 
-  // Institution maintenance (§6 Codes 132/232)
-  // Cannot be claimed together with disabled-child credit (flagged above).
+  // Institution maintenance (§6 Codes 132/232).
+  // Threshold is 12.5% of taxableIncomeForCaps (post-exemption).  FIX-1
   let institutionCredit = 0;
   if (
     data.institutionMaintenanceExpenses132_232 > 0 &&
     data.disabledChildrenCount131_023 === 0
   ) {
-    const threshold = taxableIncome * 0.125;
+    const threshold          = taxableIncomeForCaps * 0.125;
     const qualifyingExpenses = Math.max(
       0,
       data.institutionMaintenanceExpenses132_232 - threshold
@@ -848,20 +950,20 @@ export function calculateTaxRefund(data: TaxDataInput): TaxCalculationResult {
     institutionCredit = qualifyingExpenses * 0.35;
   }
 
-  // Life insurance (§6 Codes 036/081): 25 % of risk premium
+  // Life insurance (§6 Codes 036/081): 25% of risk premium.
   const lifeInsuranceCredit = data.lifeInsurancePremium036_081 * 0.25;
 
-  // Pension / survivors insurance (§6 Codes 140/240/045/086): 35 %
+  // Pension / survivors insurance (§6 Codes 140/240/045/086): 35%.
   const pensionCredit = data.pensionSurvivorsInsurance140_240 * 0.35;
 
-  // Eilat resident (§6 Codes 139/183): 10 % on Eilat income, cap at 268,560
+  // Eilat resident (§6 Codes 139/183): 10% on Eilat income, cap at 268,560.
   let eilatCredit = 0;
   if (data.isEilatResident) {
     const eilatIncomeCapped = Math.min(data.eilatIncome139_183, 268_560);
-    eilatCredit = eilatIncomeCapped * 0.10;
+    eilatCredit             = eilatIncomeCapped * 0.10;
   }
 
-  // Security forces Activity Level A (§6): 5 % on qualifying salary, cap 178,320
+  // Security forces Activity Level A (§6): 5%, cap at income of 178,320.
   const securityForcesIncomeCapped = Math.min(
     data.securityForcesActivityASalary,
     178_320
@@ -879,10 +981,15 @@ export function calculateTaxRefund(data: TaxDataInput): TaxCalculationResult {
 
   const totalCreditsValue = totalCreditPointsValue + totalDirectCredits;
 
-  // 3j. Actual Tax Owed — cannot be negative (§1 rule)
+  // 3j. Actual Tax Owed — cannot be negative (§1).
   const actualTax = Math.max(0, theoreticalTax - totalCreditsValue);
 
-  // ── STEP 4: Final Balance ────────────────────────────────────────────────
+  // ── STEP 4: Final Balance ─────────────────────────────────────────────────
+  //
+  // UI-TEAM REMINDER: ensure form fields map to these three variables correctly:
+  //   withheldTaxSalary042   ← Code 042 from Form 106 (salary withholding)
+  //   withheldTaxOther040    ← Code 040 from Form 106 (other income withholding)
+  //   withheldTaxInterest043 ← Code 043 from bank / Form 867 (interest withholding)
   const totalWithheldTax =
     data.withheldTaxSalary042 +
     data.withheldTaxOther040 +
@@ -890,17 +997,18 @@ export function calculateTaxRefund(data: TaxDataInput): TaxCalculationResult {
 
   const finalBalance = actualTax - totalWithheldTax;
 
-  // ── Outcome label ────────────────────────────────────────────────────────
+  // ── Outcome label ─────────────────────────────────────────────────────────
   let outcome: TaxCalculationResult["outcome"];
-  if (finalBalance < 0)      outcome = "REFUND";
+  if      (finalBalance < 0) outcome = "REFUND";
   else if (finalBalance > 0) outcome = "DEBT";
   else                       outcome = "BALANCED";
 
-  // ── Return full result ───────────────────────────────────────────────────
+  // ── Return full result ────────────────────────────────────────────────────
   return {
     totalGrossIncome,
     totalDeductions,
     taxableIncome,
+    taxableIncomeForCaps,         // FIX-1: exposed for UI transparency
     theoreticalTax,
     totalCreditPointsValue,
     totalDirectCredits,
@@ -931,6 +1039,9 @@ export function calculateTaxRefund(data: TaxDataInput): TaxCalculationResult {
 /**
  * Returns a zeroed-out `TaxDataInput` with safe defaults.
  * Useful as the Zustand initial state to avoid null checks throughout the UI.
+ *
+ * All new fields introduced in this revision (e.g. `gamblingLotteryIncome227`)
+ * are included here so callers always receive a structurally complete object.
  */
 export function createEmptyTaxInput(gender: Gender = "male"): TaxDataInput {
   return {
@@ -942,6 +1053,7 @@ export function createEmptyTaxInput(gender: Gender = "male"): TaxDataInput {
     severancePension258_272:                 0,
     bituachLeumiIncome250_270_194_196:       0,
     residentialRentIncome222:                0,
+    gamblingLotteryIncome227:                0,   // FIX-5: field now exists
     interestDividends060:                    0,
     interestDividends067_126:                0,
     interestDividends157_141_142:            0,
@@ -953,9 +1065,9 @@ export function createEmptyTaxInput(gender: Gender = "male"): TaxDataInput {
     employerPensionContributionPct:          0,
     providentFundPension135_180:             0,
     bituachLeumiIndependent030_089:          0,
-    withheldTaxSalary042:                    0,
-    withheldTaxOther040:                     0,
-    withheldTaxInterest043:                  0,
+    withheldTaxSalary042:                    0,   // Code 042 — salary
+    withheldTaxOther040:                     0,   // Code 040 — other income
+    withheldTaxInterest043:                  0,   // Code 043 — interest/savings
     childrenAges:                            [],
     disabledChildrenCount131_023:            0,
     totalHouseholdIncomeForDisabledChild:    0,
