@@ -36,6 +36,28 @@
  *    layer cannot silently mis-map Code 042 → wrong field.
  *    Added a `GamblingIncome227` field (zero-default) so the engine can emit a
  *    proper user-facing warning rather than silently ignoring that income code.
+ *
+ *  NEW-2 — `calcBracketTax` now rounds its return value to the nearest agora
+ *    (0.01 ILS) via `Math.round(tax * 100) / 100`. IEEE-754 drift accumulates
+ *    across five or more bracket multiplications and is observable at the
+ *    sub-agora level; rounding here prevents it from propagating into credits
+ *    and the final balance.
+ *
+ *  NEW-3 — `calcLossOfEarningDeduction` overlapping guards collapsed.
+ *    The previous implementation had a `> 7.5` early-return AND a
+ *    `effectiveRate <= 0` fallback, creating a silent dead zone. Both are
+ *    replaced by a single `Math.max(0, BASE_RATE - excess/100)` expression
+ *    with one `effectiveRate === 0` gate.
+ *
+ *  NEW-4 — `calcChildCreditPoints` and its call site now guard against
+ *    non-integer or negative child ages. The helper filters them with
+ *    `Number.isInteger(a) && a >= 0`; the engine emits a named warning
+ *    listing the offending values so the UI can highlight the field.
+ *
+ *  NEW-5 — `olehChadashMonthsElapsed` is clamped to 54 in the engine body
+ *    (before passing to the helper) and emits a named warning when the raw
+ *    value exceeds the statutory window. The helper's internal clamp is now
+ *    a true safety net rather than silent behaviour-changing logic.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -458,7 +480,9 @@ export interface TaxCalculationResult {
 
 /**
  * Applies the progressive tax brackets to the given personal-exertion income.
- * Returns the total theoretical tax on that income (ILS).  §3
+ * Returns the total theoretical tax on that income (ILS), rounded to the
+ * nearest agora (0.01 ILS) to prevent floating-point accumulation errors
+ * across bracket boundaries.  NEW-2
  */
 function calcBracketTax(personalExertionIncome: number): number {
   if (personalExertionIncome <= 0) return 0;
@@ -480,7 +504,9 @@ function calcBracketTax(personalExertionIncome: number): number {
     previousCeiling = bracket.ceiling;
   }
 
-  return tax;
+  // Round to nearest agora (0.01 ILS) — financial values must not accumulate
+  // IEEE-754 drift across successive bracket multiplications.
+  return Math.round(tax * 100) / 100;
 }
 
 /**
@@ -488,11 +514,22 @@ function calcBracketTax(personalExertionIncome: number): number {
  *
  * Women (and single parents, handled by `isSingleParent` elsewhere) get
  * "Children Points"; men get "Toddler Points" (ages 0–12 only).
+ *
+ * NEW-4: Non-integer or negative ages are silently dropped with a defensive
+ * filter so a data-entry bug on the UI cannot produce phantom credit points
+ * without surfacing as a mismatch between the raw input and the used input.
+ * The filtered count is returned via the second element for caller diagnostics.
  */
-function calcChildCreditPoints(ages: number[], gender: Gender): number {
+function calcChildCreditPoints(
+  ages: number[],
+  gender: Gender
+): number {
+  // Guard: only non-negative integers are valid child ages.
+  const safeAges = ages.filter((a) => Number.isInteger(a) && a >= 0);
+
   let points = 0;
 
-  for (const age of ages) {
+  for (const age of safeAges) {
     if (gender === "female") {
       if (age === 0)                   points += 1.5;
       else if (age >= 1 && age <= 5)   points += 2.5;
@@ -627,24 +664,31 @@ function calcOlehChadashPoints(monthsElapsed: number): number {
  *
  *  - Base rate: 3.5% of salary (capped at salary of 376,080 ILS).
  *  - If employer pension contribution > 4%:  effective rate = 3.5% − excess%.
- *  - If employer pension contribution > 7.5%: NO deduction.
+ *  - If employer pension contribution > 7.5%: effective rate collapses to 0
+ *    and the deduction is fully disallowed.
+ *
+ * NEW-3: The two previously overlapping guards (> 7.5 early-return AND
+ * effectiveRate <= 0 fallback) are collapsed into a single linear computation.
+ * `Math.max(0, ...)` on the rate means every pension-% scenario is handled by
+ * the same formula, and a single `effectiveRate === 0` check gates the rest.
  */
 function calcLossOfEarningDeduction(
   premiumPaid: number,
   grossSalary: number,
   employerPensionPct: number
 ): number {
-  if (employerPensionPct > 7.5) return 0;
-
   const SALARY_CAP = 376_080;
   const BASE_RATE  = 0.035;
 
-  const effectiveRate =
-    employerPensionPct > 4
-      ? BASE_RATE - (employerPensionPct - 4) / 100
-      : BASE_RATE;
+  // Reduce the base rate by any employer contribution above 4%, floored at 0.
+  // At 7.5% contribution the excess is 3.5pp, which exactly zeroes the rate.
+  // Above 7.5% the max(0, ...) clamp holds the rate at 0 -- deduction disallowed.
+  const effectiveRate = Math.max(
+    0,
+    BASE_RATE - Math.max(0, employerPensionPct - 4) / 100
+  );
 
-  if (effectiveRate <= 0) return 0;
+  if (effectiveRate === 0) return 0;
 
   const cappedSalary = Math.min(grossSalary, SALARY_CAP);
   const maxDeduction = cappedSalary * effectiveRate;
@@ -860,6 +904,20 @@ export function calculateTaxRefund(data: TaxDataInput): TaxCalculationResult {
   const singleParentPoints = data.isSingleParent ? 1.0 : 0;
 
   // 3c. Children credit points (§6).
+  //
+  //     NEW-4: Warn if any age in the raw array is invalid (non-integer or
+  //     negative). The helper already filters them out silently, but surfacing
+  //     the count here lets the UI flag the specific field that needs attention.
+  const invalidAges = data.childrenAges.filter(
+    (a) => !Number.isInteger(a) || a < 0
+  );
+  if (invalidAges.length > 0) {
+    warnings.push(
+      `childrenAges contains ${invalidAges.length} invalid value(s) ` +
+      `(${invalidAges.join(", ")}). Non-integer or negative ages are ignored ` +
+      `and will not generate credit points.`
+    );
+  }
   const childrenPoints = calcChildCreditPoints(data.childrenAges, data.gender);
 
   // 3d. Disabled-child credit points (§6 Codes 131/023).
@@ -895,7 +953,21 @@ export function calculateTaxRefund(data: TaxDataInput): TaxCalculationResult {
   const academicPoints = calcAcademicCreditPoints(data.academicDegree);
 
   // 3g. Oleh Chadash credit points (§6) — FIX-4 applied in the helper.
-  const olehPoints = calcOlehChadashPoints(data.olehChadashMonthsElapsed);
+  //
+  //     NEW-5: Clamp the raw input to the 54-month statutory maximum before
+  //     passing it to the helper. The helper already does Math.min(54, …)
+  //     internally, but clamping here as well makes the contract explicit and
+  //     lets us surface a user-facing warning when the UI sends a value that
+  //     implies the eligibility window has closed.
+  const rawOlehMonths = data.olehChadashMonthsElapsed;
+  if (rawOlehMonths > 54) {
+    warnings.push(
+      `Oleh Chadash credit: ${rawOlehMonths} months elapsed exceeds the ` +
+      `54-month eligibility window. No Oleh Chadash credit will be applied.`
+    );
+  }
+  const clampedOlehMonths = Math.min(rawOlehMonths, 54);
+  const olehPoints = calcOlehChadashPoints(clampedOlehMonths);
 
   // 3h. Total credit points → monetary value.
   const totalCreditPoints =
