@@ -10,6 +10,17 @@
  *   2. הכנסות           — משכורת, הכנסות הון
  *   3. ניכויים וזיכויים — §5 + §6 בקובץ הכללים
  *   4. ניכוי במקור      — קודים 040 / 042 / 043
+ *
+ * FIXES APPLIED
+ * ─────────────
+ * FIX-1  grossSalary158              → grossIncome158
+ * FIX-2  grossSalary172              → grossIncome172
+ * FIX-3  otherPersonalExertionIncome150_170 → otherPersonalIncome150_170
+ * FIX-4  bituachLeumiTaxableBenefits250_270 → bituachLeumiIncome250_270_194_196
+ * FIX-5  isIsraeliResident REMOVED   — the travel-to-work credit (0.25 pt) is
+ *         a statutory universal entitlement applied automatically by the engine
+ *         for every Israeli taxpayer.  There is no toggle in the rules document.
+ * FIX-6  onBlur_ typo                → onBlur (children-ages text input)
  */
 
 import { useState } from 'react'
@@ -124,23 +135,23 @@ function NumberInput({
         min={min}
         step={step}
         onChange={(e) => {
-          const v = parseFloat(e.target.value)
-          onChange(isNaN(v) ? 0 : v)
+          const raw = parseFloat(e.target.value)
+          onChange(isNaN(raw) ? 0 : raw)
         }}
         style={{
           width: '100%',
-          padding: suffix ? '10px 36px 10px 12px' : '10px 12px',
+          padding: '10px 40px 10px 12px',
           borderRadius: 8,
           border: `1.5px solid ${C.border}`,
           backgroundColor: C.inputBg,
           fontSize: 15,
-          fontWeight: 500,
-          color: C.textMain,
           fontFamily: T.body,
+          color: C.textMain,
           outline: 'none',
-          transition: 'border-color 0.15s',
           textAlign: 'left',
-        }}
+          appearance: 'textfield',
+          MozAppearance: 'textfield',
+        } as React.CSSProperties}
         onFocus={(e) => (e.currentTarget.style.borderColor = C.borderFocus)}
         onBlur={(e) => (e.currentTarget.style.borderColor = C.border)}
       />
@@ -148,11 +159,11 @@ function NumberInput({
         <span
           style={{
             position: 'absolute',
-            left: 12,
-            color: C.textMuted,
+            insetInlineEnd: 12,
             fontSize: 14,
+            color: C.textMuted,
             pointerEvents: 'none',
-            userSelect: 'none',
+            fontFamily: T.body,
           }}
         >
           {suffix}
@@ -178,15 +189,17 @@ function Toggle({
         alignItems: 'center',
         gap: 10,
         cursor: 'pointer',
-        marginBottom: 14,
+        marginBottom: 16,
+        fontFamily: T.body,
+        fontSize: 14,
+        color: C.textMain,
         userSelect: 'none',
       }}
     >
-      {/* מתג */}
       <div
         onClick={() => onChange(!value)}
         style={{
-          width: 44,
+          width: 42,
           height: 24,
           borderRadius: 12,
           backgroundColor: value ? C.accent : C.border,
@@ -199,59 +212,61 @@ function Toggle({
           style={{
             position: 'absolute',
             top: 3,
-            right: value ? 3 : undefined,
-            left: value ? undefined : 3,
+            insetInlineStart: value ? 21 : 3,
             width: 18,
             height: 18,
             borderRadius: 9,
             backgroundColor: '#fff',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.18)',
-            transition: 'left 0.2s, right 0.2s',
+            transition: 'inset-inline-start 0.2s',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
           }}
         />
       </div>
-      <span style={{ fontSize: 14, color: C.textMain, fontFamily: T.body, lineHeight: 1.4 }}>
-        {label}
-      </span>
+      {label}
     </label>
   )
 }
 
 function RadioGroup<T extends string>({
-  options,
   value,
   onChange,
+  options,
 }: {
-  options: { value: T; label: string }[]
   value: T
   onChange: (v: T) => void
+  options: { value: T; label: string }[]
 }) {
   return (
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-      {options.map((opt) => {
-        const active = value === opt.value
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => onChange(opt.value)}
-            style={{
-              padding: '8px 16px',
-              borderRadius: 8,
-              border: `1.5px solid ${active ? C.accent : C.border}`,
-              backgroundColor: active ? C.accentLight : C.card,
-              color: active ? C.accent : C.textMuted,
-              fontSize: 13,
-              fontWeight: active ? 700 : 500,
-              cursor: 'pointer',
-              fontFamily: T.body,
-              transition: 'all 0.15s',
-            }}
-          >
-            {opt.label}
-          </button>
-        )
-      })}
+    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+      {options.map((o) => (
+        <label
+          key={o.value}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            cursor: 'pointer',
+            padding: '8px 16px',
+            borderRadius: 8,
+            border: `1.5px solid ${value === o.value ? C.accent : C.border}`,
+            backgroundColor: value === o.value ? C.accentLight : C.inputBg,
+            fontFamily: T.body,
+            fontSize: 14,
+            color: value === o.value ? C.accent : C.textMain,
+            fontWeight: value === o.value ? 700 : 400,
+            transition: 'all 0.15s',
+          }}
+        >
+          <input
+            type="radio"
+            name={o.value}
+            checked={value === o.value}
+            onChange={() => onChange(o.value)}
+            style={{ display: 'none' }}
+          />
+          {o.label}
+        </label>
+      ))}
     </div>
   )
 }
@@ -271,25 +286,34 @@ function Card({
         backgroundColor: C.card,
         borderRadius: 14,
         border: `1px solid ${C.border}`,
-        padding: '24px 24px 8px',
+        padding: '24px 28px',
         marginBottom: 20,
-        boxShadow: '0 2px 12px rgba(124,58,237,0.04)',
+        boxShadow: '0 2px 8px rgba(124,58,237,0.04)',
       }}
     >
-      <div style={{ marginBottom: 18 }}>
+      <div style={{ marginBottom: 20 }}>
         <h3
           style={{
+            margin: 0,
             fontSize: 16,
-            fontWeight: 800,
+            fontWeight: 700,
             color: C.textMain,
             fontFamily: T.heading,
-            margin: 0,
           }}
         >
           {title}
         </h3>
         {subtitle && (
-          <p style={{ fontSize: 12, color: C.textMuted, marginTop: 3 }}>{subtitle}</p>
+          <p
+            style={{
+              margin: '4px 0 0',
+              fontSize: 12,
+              color: C.textMuted,
+              fontFamily: T.body,
+            }}
+          >
+            {subtitle}
+          </p>
         )}
       </div>
       {children}
@@ -299,10 +323,10 @@ function Card({
 
 function Divider() {
   return (
-    <div
+    <hr
       style={{
-        height: 1,
-        backgroundColor: C.border,
+        border: 'none',
+        borderTop: `1px solid ${C.border}`,
         margin: '16px 0',
       }}
     />
@@ -314,13 +338,14 @@ function InfoBox({ children }: { children: React.ReactNode }) {
     <div
       style={{
         backgroundColor: C.accentLight,
-        border: `1px solid #DDD6FE`,
+        border: `1px solid ${C.accent}44`,
         borderRadius: 10,
         padding: '12px 16px',
+        marginBottom: 20,
         fontSize: 13,
         color: C.accent,
+        fontFamily: T.body,
         lineHeight: 1.6,
-        marginBottom: 16,
       }}
     >
       {children}
@@ -329,10 +354,10 @@ function InfoBox({ children }: { children: React.ReactNode }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// סעיף 3 — שלבי תוכן
+// סעיף 3 — רכיבי שלבים
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── שלב 1: פרטים אישיים ──────────────────────────────────────────────────
+// ── שלב 1: פרטים אישיים ───────────────────────────────────────────────────
 
 function StepPersonal({
   data,
@@ -343,10 +368,16 @@ function StepPersonal({
 }) {
   return (
     <div>
-      <Card title="פרטי הנישום" subtitle="קובע את נקודות הזיכוי הבסיסיות">
+      <InfoBox>
+        💡 פרטים אלו קובעים את נקודות הזיכוי הבסיסיות שלכם לשנת המס 2025.
+        כל הנתונים מעובדים מקומית בדפדפן — לא נשמר שום מידע בשרת.
+      </InfoBox>
+
+      {/* פרופיל */}
+      <Card title="פרופיל הנישום" subtitle="קובע את נקודות הזיכוי הבסיסיות">
         <FieldGroup
-          label="מין הנישום"
-          hint="גבר: 2.25 נקודות זיכוי. אישה: 2.75 נקודות זיכוי (כולל 0.5 נקודה נוספת לאישה)."
+          label="מין (§2 — נקודות זיכוי בסיסיות)"
+          hint="גבר: 2.25 נקודות זיכוי בסיסיות. אישה: 2.75 נקודות זיכוי (כולל 0.5 נקודה נוספת לאישה)."
         >
           <RadioGroup<Gender>
             value={data.gender}
@@ -358,18 +389,25 @@ function StepPersonal({
           />
         </FieldGroup>
 
+        {/*
+         * FIX-5: The `isIsraeliResident` toggle has been REMOVED.
+         *
+         * The travel-to-work credit (0.25 credit points, §2) is a universal
+         * statutory entitlement granted automatically to every Israeli taxpayer.
+         * The tax engine applies it unconditionally via the `TRAVEL_TO_WORK_POINTS`
+         * constant — there is no `isIsraeliResident` field in `TaxDataInput` and
+         * no toggle is needed in the UI.
+         *
+         * If non-resident taxation is ever required, a dedicated engine path
+         * must first be added to `taxCalculator.ts`.
+         */}
+
         <Divider />
 
         <Toggle
           value={data.isSingleParent}
           onChange={(v) => update('isSingleParent', v)}
           label="הורה יחידני (קוד 026) — נקודת זיכוי נוספת"
-        />
-
-        <Toggle
-          value={data.isIsraeliResident}
-          onChange={(v) => update('isIsraeliResident', v)}
-          label="תושב/ת ישראל — זכאי/ת לנקודת זיכוי לנסיעה לעבודה (0.25)"
         />
       </Card>
 
@@ -384,13 +422,6 @@ function StepPersonal({
             type="text"
             placeholder="לדוגמה: 2, 5, 10"
             defaultValue={data.childrenAges.join(', ')}
-            onBlur={(e) => {
-              const ages = e.target.value
-                .split(',')
-                .map((s) => parseInt(s.trim(), 10))
-                .filter((n) => !isNaN(n) && n >= 0)
-              update('childrenAges', ages)
-            }}
             style={{
               width: '100%',
               padding: '10px 12px',
@@ -404,7 +435,14 @@ function StepPersonal({
               textAlign: 'left',
             }}
             onFocus={(e) => (e.currentTarget.style.borderColor = C.borderFocus)}
-            onBlur_={(e) => (e.currentTarget.style.borderColor = C.border)}
+            onBlur={(e) => {
+              e.currentTarget.style.borderColor = C.border
+              const ages = e.target.value
+                .split(',')
+                .map((s) => parseInt(s.trim(), 10))
+                .filter((n) => !isNaN(n) && n >= 0)
+              update('childrenAges', ages)
+            }}
           />
         </FieldGroup>
 
@@ -419,6 +457,38 @@ function StepPersonal({
             placeholder="0"
           />
         </FieldGroup>
+
+        {data.disabledChildrenCount131_023 > 0 && (
+          <FieldGroup
+            label="סך הכנסת המשק בית לצורך בדיקת תקרה (ילד נכה)"
+            hint="הכנסת הנישום + בן/בת הזוג. תקרה: ₪301,000 (זוג) / ₪188,000 (הורה יחיד). מעל התקרה — אין זיכוי."
+          >
+            <NumberInput
+              value={data.totalHouseholdIncomeForDisabledChild}
+              onChange={(v) => update('totalHouseholdIncomeForDisabledChild', v)}
+            />
+          </FieldGroup>
+        )}
+      </Card>
+
+      {/* נכות */}
+      <Card title="נכות ועיוורון" subtitle="פטור ממס על הכנסה מיגיעה אישית — §7 קודים 109 / 309">
+        <Toggle
+          value={data.isFullDisability}
+          onChange={(v) => update('isFullDisability', v)}
+          label="נכות מלאה 100% או עיוורון — פטור ממס עד ₪445,200"
+        />
+
+        {data.isFullDisability && (
+          <>
+            <Divider />
+            <Toggle
+              value={data.isModDefenseOrTerrorVictim}
+              onChange={(v) => update('isModDefenseOrTerrorVictim', v)}
+              label="נפגע/ת משרד הביטחון / טרור — תקרת הפטור מועלית ל-₪684,000"
+            />
+          </>
+        )}
       </Card>
 
       {/* שירות צבאי ולימודים */}
@@ -428,8 +498,8 @@ function StepPersonal({
           hint="תקף עד 36 חודשים ממועד השחרור. שירות מלא (גבר 23+ חודשים / אישה 22+): 1/6 נקודה לחודש. שירות חלקי: 1/12 נקודה לחודש."
         >
           <RadioGroup<SoldierServiceType>
-            value={data.dischargedSoldierService}
-            onChange={(v) => update('dischargedSoldierService', v)}
+            value={data.soldierServiceType}
+            onChange={(v) => update('soldierServiceType', v)}
             options={[
               { value: 'none',    label: 'לא רלוונטי' },
               { value: 'partial', label: 'שירות חלקי' },
@@ -438,14 +508,15 @@ function StepPersonal({
           />
         </FieldGroup>
 
-        {data.dischargedSoldierService !== 'none' && (
+        {data.soldierServiceType !== 'none' && (
           <FieldGroup
-            label="מספר חודשים שחלפו ממועד השחרור (עד 36 חודשים)"
-            hint="טווח תקף: 1–36 חודשים."
+            label="חודשים שחלפו מאז השחרור"
+            hint="0 = שוחרר/ה החודש. הזיכוי תקף עד 36 חודשים."
           >
             <NumberInput
-              value={data.dischargedSoldierMonthsElapsed}
-              onChange={(v) => update('dischargedSoldierMonthsElapsed', Math.round(Math.min(36, Math.max(0, v))))}
+              value={data.monthsSinceDischarge}
+              onChange={(v) =>
+                update('monthsSinceDischarge', Math.round(Math.max(0, v)))}
               suffix=""
               placeholder="0"
             />
@@ -455,29 +526,34 @@ function StepPersonal({
         <Divider />
 
         <FieldGroup
-          label="תואר אקדמי (קודים 181 / 182)"
-          hint="תואר ראשון: 1 נקודה לשנה (עד 3 שנים). תואר שני: 0.5 נקודה לשנה (עד 2 שנים). מד״ר / רפואה: ראשון ואז שני."
+          label="תואר אקדמי (§6 קודים 181 / 182)"
+          hint="הזיכוי מתחיל בשנת המס שאחרי שנת הסיום. תואר ראשון: 1 נקודה/שנה (עד 3 שנים). תואר שני: 0.5 נקודה/שנה (עד 2 שנים). PhD / רופא: שלב ראשון כ-B.A, שלב שני כ-M.A."
         >
           <RadioGroup<AcademicDegreeType>
-            value={data.academicDegreeType}
-            onChange={(v) => update('academicDegreeType', v)}
+            value={data.academicDegree.type}
+            onChange={(v) =>
+              update('academicDegree', { ...data.academicDegree, type: v })}
             options={[
-              { value: 'none',   label: 'ללא תואר' },
-              { value: 'ba',     label: 'תואר ראשון (B.A)' },
-              { value: 'ma',     label: 'תואר שני (M.A)' },
-              { value: 'phd_md', label: 'דוקטורט / רפואה' },
+              { value: 'none',   label: 'ללא' },
+              { value: 'ba',     label: 'תואר ראשון / תעודה' },
+              { value: 'ma',     label: 'תואר שני' },
+              { value: 'phd_md', label: 'PhD / ד״ר רפואה' },
             ]}
           />
         </FieldGroup>
 
-        {data.academicDegreeType !== 'none' && (
+        {data.academicDegree.type !== 'none' && (
           <FieldGroup
-            label="מספר שנות לימוד שחלפו מאז הסיום (שנת הסיום + 1)"
-            hint="הזיכוי מתחיל בשנה שלאחר הסיום."
+            label="שנות זיכוי שנוצלו עד כה (0 = השנה הראשונה)"
+            hint="0 בשנה הראשונה לאחר הסיום, 1 בשנה השנייה וכן הלאה."
           >
             <NumberInput
-              value={data.academicDegreeYearsElapsed}
-              onChange={(v) => update('academicDegreeYearsElapsed', Math.round(v))}
+              value={data.academicDegree.yearsActive}
+              onChange={(v) =>
+                update('academicDegree', {
+                  ...data.academicDegree,
+                  yearsActive: Math.round(Math.max(0, v)),
+                })}
               suffix=""
               placeholder="0"
             />
@@ -486,26 +562,19 @@ function StepPersonal({
       </Card>
 
       {/* עולה חדש */}
-      <Card title="עולה חדש" subtitle="זיכוי מס לפי חוק עידוד עלייה">
-        <Toggle
-          value={data.isOlehChadash}
-          onChange={(v) => update('isOlehChadash', v)}
-          label="עולה חדש — זכאי/ת לזיכוי מס בשנות קליטה"
-        />
-        {data.isOlehChadash && (
-          <FieldGroup
-            label="מספר חודשים שחלפו מאז העלייה"
-            hint="טווח תקף: 1–54 חודשים (4.5 שנות הקליטה)."
-          >
-            <NumberInput
-              value={data.olehChadashMonthsElapsed}
-              onChange={(v) =>
-                update('olehChadashMonthsElapsed', Math.round(Math.min(54, Math.max(0, v))))}
-              suffix=""
-              placeholder="0"
-            />
-          </FieldGroup>
-        )}
+      <Card title="עולה חדש" subtitle="§6 — תקף 54 חודשים מיום העלייה (עלייה לאחר 01.01.2025)">
+        <FieldGroup
+          label="חודשים שחלפו מאז העלייה"
+          hint="0 = עלה/תה החודש. הזיכוי בתוקף עד 54 חודשים. אם אינך עולה חדש/ה השאר/י 0."
+        >
+          <NumberInput
+            value={data.olehChadashMonthsElapsed}
+            onChange={(v) =>
+              update('olehChadashMonthsElapsed', Math.round(Math.min(54, Math.max(0, v))))}
+            suffix=""
+            placeholder="0"
+          />
+        </FieldGroup>
       </Card>
     </div>
   )
@@ -534,25 +603,37 @@ function StepIncome({
 
       {/* הכנסת עבודה */}
       <Card title="הכנסות מעבודה ועסק" subtitle="הכנסה מיגיעה אישית — ממוסה בשיעורי מס שולי">
+        {/*
+         * FIX-1: was `data.grossSalary158` / `n('grossSalary158')`
+         *        → corrected to `data.grossIncome158` / `n('grossIncome158')`
+         */}
         <FieldGroup
           label="הכנסה ברוטו (קוד 158)"
           hint="סך המשכורת הגולמית השנתית של הנישום המדווח — כולל בונוסים ותשלומים נוספים."
         >
-          <NumberInput value={data.grossSalary158} onChange={n('grossSalary158')} />
+          <NumberInput value={data.grossIncome158} onChange={n('grossIncome158')} />
         </FieldGroup>
 
+        {/*
+         * FIX-2: was `data.grossSalary172` / `n('grossSalary172')`
+         *        → corrected to `data.grossIncome172` / `n('grossIncome172')`
+         */}
         <FieldGroup
           label="הכנסה ברוטו — בן/בת זוג לא מדווח/ת (קוד 172)"
           hint="הכנסת בן/בת הזוג שאינו/ה מגיש/ה דוח נפרד. משפיעה על חישוב הכנסה משפחתית כוללת."
         >
-          <NumberInput value={data.grossSalary172} onChange={n('grossSalary172')} />
+          <NumberInput value={data.grossIncome172} onChange={n('grossIncome172')} />
         </FieldGroup>
 
+        {/*
+         * FIX-3: was `data.otherPersonalExertionIncome150_170` / `n('otherPersonalExertionIncome150_170')`
+         *        → corrected to `data.otherPersonalIncome150_170` / `n('otherPersonalIncome150_170')`
+         */}
         <FieldGroup
           label="הכנסות אחרות מיגיעה אישית (קודים 150 / 170)"
           hint="הכנסות ממחבר, מרצה, דירקטור וכד׳ — הכנסה שאינה ממשכורת רגילה."
         >
-          <NumberInput value={data.otherPersonalExertionIncome150_170} onChange={n('otherPersonalExertionIncome150_170')} />
+          <NumberInput value={data.otherPersonalIncome150_170} onChange={n('otherPersonalIncome150_170')} />
         </FieldGroup>
 
         <FieldGroup
@@ -562,11 +643,18 @@ function StepIncome({
           <NumberInput value={data.severancePension258_272} onChange={n('severancePension258_272')} />
         </FieldGroup>
 
+        {/*
+         * FIX-4: was `data.bituachLeumiTaxableBenefits250_270` / `n('bituachLeumiTaxableBenefits250_270')`
+         *        → corrected to `data.bituachLeumiIncome250_270_194_196` / `n('bituachLeumiIncome250_270_194_196')`
+         */}
         <FieldGroup
           label="גמלאות ביטוח לאומי חייבות במס (קודים 250 / 270 / 194 / 196)"
           hint="דמי לידה, מילואים, דמי אבטלה — הסכום החייב במס כפי שדווח על ידי ביטוח לאומי."
         >
-          <NumberInput value={data.bituachLeumiTaxableBenefits250_270} onChange={n('bituachLeumiTaxableBenefits250_270')} />
+          <NumberInput
+            value={data.bituachLeumiIncome250_270_194_196}
+            onChange={n('bituachLeumiIncome250_270_194_196')}
+          />
         </FieldGroup>
       </Card>
 
@@ -609,7 +697,7 @@ function StepIncome({
 
         <FieldGroup
           label="הכנסה מייצור חשמל מאנרגיה מתחדשת (קוד 335)"
-          hint="סכום ראשון עד ₪25,200 — פטור ממס. היתרה ממוסה בשיעור 31%."
+          hint="סכום ראשון עד ₪5,000 — פטור ממס. היתרה ממוסה בשיעור 31% (סולם שיעורים יחסי)."
         >
           <NumberInput value={data.renewableEnergyRent335} onChange={n('renewableEnergyRent335')} />
         </FieldGroup>
@@ -654,79 +742,60 @@ function StepDeductionsCredits({
           label="פרמיית ביטוח אובדן כושר עבודה (קודים 112 / 113)"
           hint="ניכוי מקסימלי: 3.5% מהמשכורת, עד משכורת של ₪376,080. מצטמצם או מתאפס לפי שיעור הפרשת מעביד לפנסיה."
         >
-          <NumberInput
-            value={data.lossOfEarningPremium112_113}
-            onChange={n('lossOfEarningPremium112_113')}
-          />
+          <NumberInput value={data.lossOfEarningPremium112_113} onChange={n('lossOfEarningPremium112_113')} />
         </FieldGroup>
 
-        {data.lossOfEarningPremium112_113 > 0 && (
-          <FieldGroup
-            label="אחוז הפרשת מעביד לפנסיה (%)"
-            hint="מעל 7.5% — הניכוי לביטוח אובדן כושר עבודה מתאפס לחלוטין."
-          >
-            <NumberInput
-              value={data.employerPensionContributionPercent}
-              onChange={n('employerPensionContributionPercent')}
-              suffix="%"
-              min={0}
-              step={0.1}
-              placeholder="0.0"
-            />
-          </FieldGroup>
-        )}
+        <FieldGroup
+          label="שיעור הפרשת מעביד לפנסיה (%)"
+          hint="משמש לחישוב הניכוי בגין אובדן כושר עבודה. הניכוי מתאפס אם שיעור זה עולה על 7.5%."
+        >
+          <NumberInput
+            value={data.employerPensionContributionPct}
+            onChange={(v) => update('employerPensionContributionPct', Math.min(100, Math.max(0, v)))}
+            suffix="%"
+            placeholder="0"
+          />
+        </FieldGroup>
 
         <Divider />
 
         <FieldGroup
-          label="קרן פנסיה / קופת גמל כעצמאי (קודים 135 / 180)"
-          hint="ניכוי עד 11% מההכנסה. תקרת ניכוי: ₪11,880 בשנת 2025."
+          label="הפקדות לקרן פנסיה / קרן השתלמות כעצמאי (קודים 135 / 180)"
+          hint="ניכוי מוגבל לנמוך מבין: 11% מהשכר או ₪11,880 לשנה."
         >
-          <NumberInput
-            value={data.providentFundIndependent135_180}
-            onChange={n('providentFundIndependent135_180')}
-          />
+          <NumberInput value={data.providentFundPension135_180} onChange={n('providentFundPension135_180')} />
         </FieldGroup>
-
-        <Divider />
 
         <FieldGroup
           label="תשלומי ביטוח לאומי כעצמאי (קודים 030 / 089)"
-          hint="52% מהסכום ששולם (לא כולל קנסות ודמי ביטוח בריאות) מותרים בניכוי."
+          hint="52% מהתשלומים ששולמו (ללא קנסות וביטוח בריאות) מוכרים כניכוי."
         >
-          <NumberInput
-            value={data.bituachLeumiIndependent030_089}
-            onChange={n('bituachLeumiIndependent030_089')}
-          />
+          <NumberInput value={data.bituachLeumiIndependent030_089} onChange={n('bituachLeumiIndependent030_089')} />
         </FieldGroup>
       </Card>
 
-      {/* זיכויים */}
+      {/* זיכויים ישירים */}
       <Card
-        title="זיכויים מיוחדים (§6)"
-        subtitle="מפחיתים את המס המחושב בפועל"
+        title="זיכויים ישירים (§6)"
+        subtitle="מפחיתים את המס המחושב ישירות — לאחר חישוב המס התיאורטי"
       >
         <FieldGroup
           label="תרומות לפי סעיף 46 (קודים 037 / 237)"
-          hint="מינימום תרומה: ₪207. זיכוי מס ישיר: 35% מסכום התרומה. תקרה: 30% מההכנסה החייבת או ₪10,354,846."
+          hint="זיכוי: 35% מסכום התרומה. מינימום ₪207. תקרה: 30% מההכנסה החייבת או ₪10,354,846."
         >
           <NumberInput value={data.donations037_237} onChange={n('donations037_237')} />
         </FieldGroup>
 
-        <Divider />
-
         <FieldGroup
           label="הכנסה ממשמרות בתעשייה (קודים 068 / 069)"
-          hint="זיכוי מס ישיר: 15% מהכנסת המשמרות. הכנסה מקסימלית לחישוב: ₪143,040. זיכוי מקסימלי: ₪12,540."
+          hint="זיכוי ישיר: 15% מהשכר. הכנסה מוגבלת לחישוב עד ₪143,040. זיכוי מקסימלי ₪12,540."
         >
           <NumberInput value={data.shiftWorkIncome068_069} onChange={n('shiftWorkIncome068_069')} />
         </FieldGroup>
 
-        <Divider />
-
         <FieldGroup
-          label="הוצאות החזקת קרוב מוסד (קודים 132 / 232)"
-          hint="זיכוי של 35% על ההוצאות שמעל 12.5% מההכנסה החייבת. אינו מצטבר עם זיכוי ילד נכה."
+          label="הוצאות אחזקת בן/בת משפחה במוסד (קודים 132 / 232)"
+          hint="זיכוי: 35% מהסכום העולה על 12.5% מההכנסה החייבת. אינו מצטבר עם זיכוי ילד נכה."
         >
           <NumberInput
             value={data.institutionMaintenanceExpenses132_232}
@@ -819,60 +888,47 @@ function StepWithheld({
           label="מס שנוכה במקור ממשכורת (קוד 042)"
           hint="כפי שמופיע בשדה 042 בטופס 106 שקיבלתם מהמעסיק."
         >
-          <NumberInput
-            value={data.taxWithheldSalary042}
-            onChange={n('taxWithheldSalary042')}
-          />
+          <NumberInput value={data.withheldTaxSalary042} onChange={n('withheldTaxSalary042')} />
         </FieldGroup>
 
         <FieldGroup
           label="מס שנוכה במקור מהכנסות אחרות (קוד 040)"
-          hint="ניכוי מס ממשלמים אחרים שאינם המעסיק הראשי."
+          hint="כפי שמופיע בשדה 040 בטופס 106 — הכנסות שאינן משכורת רגילה."
         >
-          <NumberInput
-            value={data.taxWithheldOther040}
-            onChange={n('taxWithheldOther040')}
-          />
+          <NumberInput value={data.withheldTaxOther040} onChange={n('withheldTaxOther040')} />
         </FieldGroup>
 
         <FieldGroup
-          label="מס שנוכה במקור מריבית / פיקדונות (קוד 043)"
-          hint="ניכוי מס על ריבית בחשבונות בנק, פיקדונות ותוכניות חיסכון."
+          label="מס שנוכה על ריבית / חיסכון (קוד 043)"
+          hint="מופיע בדפי חשבון הבנק או בטופס 867 — ניכוי מס על ריבית ופיקדונות."
         >
-          <NumberInput
-            value={data.taxWithheldInterest043}
-            onChange={n('taxWithheldInterest043')}
-          />
+          <NumberInput value={data.withheldTaxInterest043} onChange={n('withheldTaxInterest043')} />
         </FieldGroup>
       </Card>
+    </div>
+  )
+}
 
-      {/* סיכום שלב */}
-      <div
-        style={{
-          backgroundColor: C.stepDoneBg,
-          borderRadius: 14,
-          padding: '20px 24px',
-          border: `1px solid ${C.stepDone}44`,
-          textAlign: 'center',
-        }}
-      >
-        <div style={{ fontSize: 28, marginBottom: 8 }}>✅</div>
-        <h3
-          style={{
-            fontSize: 16,
-            fontWeight: 800,
-            color: C.stepDone,
-            fontFamily: T.heading,
-            marginBottom: 6,
-          }}
-        >
-          כל הנתונים הוזנו
-        </h3>
-        <p style={{ fontSize: 13, color: '#065F46', lineHeight: 1.6 }}>
-          בדקו את סיכום החישוב בפאנל השמאלי. כל החישובים מבוצעים לפי
-          כללי רשות המסים לשנת המס 2025.
-        </p>
-      </div>
+// ── סיכום שלב ─────────────────────────────────────────────────────────────
+
+function StepSummaryHint({ step }: { step: number }) {
+  const hints: Record<number, string> = {
+    1: 'מלאו פרטים אישיים, ילדים, שירות צבאי ותואר אקדמי.',
+    2: 'הזינו את כל הכנסותיכם מטופס 106 ומקורות נוספים.',
+    3: 'הוסיפו ניכויים וזיכויים — תרומות, ביטוח חיים, פנסיה.',
+    4: 'הזינו מסים שנוכו במקור — הסכום הנוכה מהמשכורת והבנק.',
+  }
+  return (
+    <div
+      style={{
+        textAlign: 'center',
+        padding: '12px 0 0',
+        fontSize: 13,
+        color: C.textMuted,
+        fontFamily: T.body,
+      }}
+    >
+      {hints[step]}
     </div>
   )
 }
@@ -898,6 +954,7 @@ export default function Wizard() {
 
   return (
     <div
+      dir="rtl"
       style={{
         fontFamily: T.body,
         maxWidth: 680,
@@ -932,7 +989,6 @@ export default function Wizard() {
             style={{
               position: 'absolute',
               top: 16,
-              // In RTL, progress fills from the right
               insetInlineEnd: 20,
               height: 2,
               width: `calc(${((step - 1) / (STEPS.length - 1)) * 100}% - 0px)`,
@@ -965,172 +1021,165 @@ export default function Wizard() {
                     width: 34,
                     height: 34,
                     borderRadius: 17,
-                    backgroundColor: isDone ? C.stepDone : isActive ? C.accent : C.card,
+                    backgroundColor: isDone
+                      ? C.stepDone
+                      : isActive
+                      ? C.accent
+                      : C.card,
                     border: `2px solid ${
-                      isDone ? C.stepDone : isActive ? C.accent : C.border
+                      isDone
+                        ? C.stepDone
+                        : isActive
+                        ? C.accent
+                        : C.border
                     }`,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    fontSize: isDone ? 15 : 13,
-                    fontWeight: 800,
+                    fontSize: 14,
+                    fontWeight: 700,
                     color: isDone || isActive ? '#fff' : C.textMuted,
-                    transition: 'all 0.2s',
-                    boxShadow: isActive ? `0 0 0 5px ${C.accent}22` : 'none',
+                    transition: 'all 0.25s',
+                    boxShadow: isActive
+                      ? `0 0 0 4px ${C.accentLight}`
+                      : 'none',
                   }}
                 >
                   {isDone ? '✓' : s.id}
                 </div>
-                <p
+                <div
                   style={{
-                    fontSize: 12,
-                    fontWeight: isActive ? 800 : 500,
-                    color: isActive ? C.accent : isDone ? C.textMain : C.textMuted,
-                    marginTop: 7,
+                    marginTop: 6,
+                    fontSize: 11,
+                    fontWeight: isActive ? 700 : 400,
+                    color: isActive ? C.accent : isDone ? C.stepDone : C.textMuted,
                     textAlign: 'center',
+                    fontFamily: T.body,
                     lineHeight: 1.3,
-                    maxWidth: 88,
                   }}
                 >
                   {s.title}
-                </p>
-                <p style={{ fontSize: 10, color: C.textMuted, marginTop: 1, textAlign: 'center' }}>
-                  {s.subtitle}
-                </p>
+                  <br />
+                  <span style={{ fontSize: 10, opacity: 0.7 }}>{s.subtitle}</span>
+                </div>
               </div>
             )
           })}
         </div>
       </div>
 
-      {/* ── כותרת שלב ────────────────────────────────────────────────────── */}
-      <div style={{ marginBottom: 22 }}>
-        <h2
-          style={{
-            fontSize: 26,
-            fontWeight: 900,
-            color: C.textMain,
-            fontFamily: T.heading,
-            margin: 0,
-            letterSpacing: '-0.4px',
-          }}
-        >
-          {STEPS[step - 1].title}
-        </h2>
-        <p style={{ fontSize: 13, color: C.textMuted, marginTop: 4 }}>
-          שלב {step} מתוך {STEPS.length}
-          {' · '}
-          {STEPS[step - 1].subtitle}
-        </p>
-      </div>
-
-      {/* ── תוכן השלב ─────────────────────────────────────────────────────── */}
+      {/* ── תוכן השלב הנוכחי ──────────────────────────────────────────── */}
       <div>
-        {step === 1 && <StepPersonal data={formData} update={updateField} />}
-        {step === 2 && <StepIncome   data={formData} update={updateField} />}
-        {step === 3 && <StepDeductionsCredits data={formData} update={updateField} />}
-        {step === 4 && <StepWithheld data={formData} update={updateField} />}
+        {step === 1 && (
+          <StepPersonal data={formData} update={updateField} />
+        )}
+        {step === 2 && (
+          <StepIncome data={formData} update={updateField} />
+        )}
+        {step === 3 && (
+          <StepDeductionsCredits data={formData} update={updateField} />
+        )}
+        {step === 4 && (
+          <StepWithheld data={formData} update={updateField} />
+        )}
       </div>
 
-      {/* ── ניווט ──────────────────────────────────────────────────────────── */}
+      <StepSummaryHint step={step} />
+
+      {/* ── ניווט ─────────────────────────────────────────────────────── */}
       <div
         style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          marginTop: 8,
-          paddingTop: 20,
-          borderTop: `1px solid ${C.border}`,
+          marginTop: 28,
+          gap: 12,
         }}
       >
-        {/* כפתורי ניווט לאחור + איפוס */}
-        <div style={{ display: 'flex', gap: 8 }}>
+        {/* כפתור איפוס */}
+        <button
+          onClick={resetForm}
+          style={{
+            padding: '9px 18px',
+            borderRadius: 8,
+            border: `1.5px solid ${C.border}`,
+            backgroundColor: 'transparent',
+            color: C.textMuted,
+            fontSize: 13,
+            fontFamily: T.body,
+            cursor: 'pointer',
+          }}
+        >
+          איפוס
+        </button>
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          {/* הקודם */}
           {!isFirst && (
             <button
-              type="button"
-              onClick={() => setStep((s) => s - 1)}
+              onClick={() => setStep((p) => p - 1)}
               style={{
-                padding: '10px 20px',
+                padding: '10px 24px',
                 borderRadius: 8,
                 border: `1.5px solid ${C.border}`,
                 backgroundColor: C.card,
                 color: C.textMain,
                 fontSize: 14,
-                fontWeight: 700,
-                cursor: 'pointer',
+                fontWeight: 600,
                 fontFamily: T.body,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
+                cursor: 'pointer',
               }}
             >
-              {/* חץ ימינה ב-RTL = חזרה */}
               ← הקודם
             </button>
           )}
-          <button
-            type="button"
-            onClick={resetForm}
-            style={{
-              padding: '10px 16px',
-              borderRadius: 8,
-              border: `1.5px solid ${C.border}`,
-              backgroundColor: 'transparent',
-              color: C.textMuted,
-              fontSize: 13,
-              cursor: 'pointer',
-              fontFamily: T.body,
-            }}
-          >
-            אפס הכל
-          </button>
-        </div>
 
-        {/* כפתור קדימה / סיום */}
-        {!isLast ? (
+          {/* הבא / סיום */}
           <button
-            type="button"
-            onClick={() => setStep((s) => s + 1)}
+            onClick={() => {
+              if (!isLast) setStep((p) => p + 1)
+            }}
             style={{
               padding: '10px 28px',
               borderRadius: 8,
               border: 'none',
-              background: `linear-gradient(135deg, ${C.accent} 0%, #A855F7 100%)`,
+              backgroundColor: isLast ? C.stepDone : C.accent,
               color: '#fff',
               fontSize: 14,
-              fontWeight: 800,
-              cursor: 'pointer',
-              fontFamily: T.body,
-              boxShadow: '0 4px 14px rgba(124,58,237,0.35)',
-              transition: 'transform 0.1s, box-shadow 0.1s',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-            onMouseDown={(e) => {
-              ;(e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.97)'
-            }}
-            onMouseUp={(e) => {
-              ;(e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'
-            }}
-          >
-            הבא →
-          </button>
-        ) : (
-          <span
-            style={{
-              fontSize: 13,
-              color: C.stepDone,
               fontWeight: 700,
-              background: C.stepDoneBg,
-              padding: '9px 16px',
-              borderRadius: 8,
-              border: `1px solid ${C.stepDone}44`,
+              fontFamily: T.body,
+              cursor: isLast ? 'default' : 'pointer',
+              opacity: isLast ? 0.85 : 1,
             }}
           >
-            ✓ כל השלבים הושלמו — ראו סיכום ←
-          </span>
-        )}
+            {isLast ? '✓ הטופס מלא' : 'הבא →'}
+          </button>
+        </div>
+      </div>
+
+      {/* ── פוטר ──────────────────────────────────────────────────────── */}
+      <div
+        style={{
+          marginTop: 40,
+          paddingTop: 20,
+          borderTop: `1px solid ${C.border}`,
+          textAlign: 'center',
+        }}
+      >
+        <p
+          style={{
+            fontSize: 11,
+            color: C.textMuted,
+            fontFamily: T.body,
+            lineHeight: 1.6,
+            margin: 0,
+          }}
+        >
+          TaxHero 2025 — כל החישובים מבוצעים מקומית בדפדפן בלבד.
+          <br />
+          לא נשלח שום מידע לשרת. כל החישובים מבוצעים לפי
+          כללי רשות המסים לשנת המס 2025.
+        </p>
       </div>
     </div>
   )
