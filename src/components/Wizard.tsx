@@ -31,6 +31,7 @@ import type {
   SoldierServiceType,
   AcademicDegreeType,
 } from '../engine/taxCalculator'
+import OcrUploader from './OcrUploader';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // סעיף 1 — טוקני עיצוב
@@ -600,7 +601,7 @@ function StepIncome({
         💡 הזינו את הסכומים השנתיים ברוטו כפי שמופיעים בטופס 106 שקיבלתם ממעסיקיכם.
         כל הערכים בשקלים חדשים (₪).
       </InfoBox>
-
+      <OcrUploader />
       {/* הכנסת עבודה */}
       <Card title="הכנסות מעבודה ועסק" subtitle="הכנסה מיגיעה אישית — ממוסה בשיעורי מס שולי">
         {/*
