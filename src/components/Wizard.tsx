@@ -1,16 +1,15 @@
 /**
- * TaxHero 2025 — Wizard
- * =====================
- * A 4-step guided form that collects all `TaxDataInput` fields and writes them
- * to Zustand via `updateField`. Every keystroke triggers an instant recalculation
- * in the store; the SummarySidebar reflects the new result without any explicit
- * "calculate" button.
+ * TaxHero 2025 — אשף מילוי הטופס (RTL עברית)
+ * =============================================
+ * טופס מודרך ב-4 שלבים שאוסף את כל שדות TaxDataInput
+ * ומעדכן את Zustand דרך updateField.
+ * כל הקלדה מפעילה חישוב מס מחדש באופן מיידי.
  *
- * Step structure:
- *   1. Your Profile     — gender, dependants, disability
- *   2. Income           — salary, capital income
- *   3. Deductions & Credits — §5 + §6 of the rules document
- *   4. Tax Withheld     — codes 040 / 042 / 043
+ * מבנה השלבים:
+ *   1. פרטים אישיים     — מין, תלויים, נכות
+ *   2. הכנסות           — משכורת, הכנסות הון
+ *   3. ניכויים וזיכויים — §5 + §6 בקובץ הכללים
+ *   4. ניכוי במקור      — קודים 040 / 042 / 043
  */
 
 import { useState } from 'react'
@@ -23,7 +22,7 @@ import type {
 } from '../engine/taxCalculator'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SECTION 1 — DESIGN TOKENS
+// סעיף 1 — טוקני עיצוב
 // ─────────────────────────────────────────────────────────────────────────────
 
 const C = {
@@ -41,25 +40,29 @@ const C = {
   inputBg:     '#FAFAFA',
   danger:      '#DC2626',
   dangerBg:    '#FEF2F2',
+  warn:        '#D97706',
+  warnBg:      '#FFFBEB',
 }
 
 const T = {
-  heading:  "'Bricolage Grotesque', system-ui, sans-serif",
-  body:     "'DM Sans', system-ui, sans-serif",
+  heading: "'Heebo', system-ui, sans-serif",
+  body:    "'Assistant', system-ui, sans-serif",
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SECTION 2 — REUSABLE FORM PRIMITIVES
+// סעיף 2 — פרימיטיבים לטופס
 // ─────────────────────────────────────────────────────────────────────────────
 
 function FieldGroup({
   label,
   hint,
   children,
+  warn,
 }: {
   label: string
   hint?: string
   children: React.ReactNode
+  warn?: boolean
 }) {
   return (
     <div style={{ marginBottom: 20 }}>
@@ -67,8 +70,8 @@ function FieldGroup({
         style={{
           display: 'block',
           fontSize: 14,
-          fontWeight: 600,
-          color: C.textMain,
+          fontWeight: 700,
+          color: warn ? C.warn : C.textMain,
           marginBottom: 2,
           fontFamily: T.body,
         }}
@@ -76,7 +79,18 @@ function FieldGroup({
         {label}
       </label>
       {hint && (
-        <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 6, lineHeight: 1.4 }}>
+        <p
+          style={{
+            fontSize: 12,
+            color: warn ? C.warn : C.textMuted,
+            marginBottom: 6,
+            lineHeight: 1.5,
+            backgroundColor: warn ? C.warnBg : 'transparent',
+            borderRadius: warn ? 6 : 0,
+            padding: warn ? '4px 8px' : 0,
+            border: warn ? `1px solid ${C.warn}44` : 'none',
+          }}
+        >
           {hint}
         </p>
       )}
@@ -89,20 +103,48 @@ function NumberInput({
   value,
   onChange,
   placeholder = '0',
-  prefix = '₪',
+  suffix = '₪',
   min = 0,
   step = 1,
 }: {
   value: number
   onChange: (v: number) => void
   placeholder?: string
-  prefix?: string
+  suffix?: string
   min?: number
   step?: number
 }) {
   return (
     <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-      {prefix && (
+      <input
+        type="number"
+        dir="ltr"
+        value={value === 0 ? '' : value}
+        placeholder={placeholder}
+        min={min}
+        step={step}
+        onChange={(e) => {
+          const v = parseFloat(e.target.value)
+          onChange(isNaN(v) ? 0 : v)
+        }}
+        style={{
+          width: '100%',
+          padding: suffix ? '10px 36px 10px 12px' : '10px 12px',
+          borderRadius: 8,
+          border: `1.5px solid ${C.border}`,
+          backgroundColor: C.inputBg,
+          fontSize: 15,
+          fontWeight: 500,
+          color: C.textMain,
+          fontFamily: T.body,
+          outline: 'none',
+          transition: 'border-color 0.15s',
+          textAlign: 'left',
+        }}
+        onFocus={(e) => (e.currentTarget.style.borderColor = C.borderFocus)}
+        onBlur={(e) => (e.currentTarget.style.borderColor = C.border)}
+      />
+      {suffix && (
         <span
           style={{
             position: 'absolute',
@@ -113,45 +155,74 @@ function NumberInput({
             userSelect: 'none',
           }}
         >
-          {prefix}
+          {suffix}
         </span>
       )}
-      <input
-        type="number"
-        value={value === 0 ? '' : value}
-        min={min}
-        step={step}
-        placeholder={placeholder}
-        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-        style={{
-          width: '100%',
-          paddingLeft: prefix ? 32 : 12,
-          paddingRight: 12,
-          paddingTop: 10,
-          paddingBottom: 10,
-          border: `1.5px solid ${C.border}`,
-          borderRadius: 8,
-          fontSize: 14,
-          backgroundColor: C.inputBg,
-          color: C.textMain,
-          outline: 'none',
-          fontFamily: T.body,
-          fontVariantNumeric: 'tabular-nums',
-          transition: 'border-color 0.15s',
-        }}
-        onFocus={(e) => (e.target.style.borderColor = C.borderFocus)}
-        onBlur={(e) => (e.target.style.borderColor = C.border)}
-      />
     </div>
   )
 }
 
-function ToggleGroup<T extends string>({
+function Toggle({
+  value,
+  onChange,
+  label,
+}: {
+  value: boolean
+  onChange: (v: boolean) => void
+  label: string
+}) {
+  return (
+    <label
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        cursor: 'pointer',
+        marginBottom: 14,
+        userSelect: 'none',
+      }}
+    >
+      {/* מתג */}
+      <div
+        onClick={() => onChange(!value)}
+        style={{
+          width: 44,
+          height: 24,
+          borderRadius: 12,
+          backgroundColor: value ? C.accent : C.border,
+          position: 'relative',
+          transition: 'background-color 0.2s',
+          flexShrink: 0,
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            top: 3,
+            right: value ? 3 : undefined,
+            left: value ? undefined : 3,
+            width: 18,
+            height: 18,
+            borderRadius: 9,
+            backgroundColor: '#fff',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.18)',
+            transition: 'left 0.2s, right 0.2s',
+          }}
+        />
+      </div>
+      <span style={{ fontSize: 14, color: C.textMain, fontFamily: T.body, lineHeight: 1.4 }}>
+        {label}
+      </span>
+    </label>
+  )
+}
+
+function RadioGroup<T extends string>({
   options,
   value,
   onChange,
 }: {
-  options: { value: T; label: string; sublabel?: string }[]
+  options: { value: T; label: string }[]
   value: T
   onChange: (v: T) => void
 }) {
@@ -170,21 +241,14 @@ function ToggleGroup<T extends string>({
               border: `1.5px solid ${active ? C.accent : C.border}`,
               backgroundColor: active ? C.accentLight : C.card,
               color: active ? C.accent : C.textMuted,
-              fontWeight: active ? 700 : 400,
               fontSize: 13,
+              fontWeight: active ? 700 : 500,
               cursor: 'pointer',
               fontFamily: T.body,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
               transition: 'all 0.15s',
-              minWidth: 90,
             }}
           >
-            <span>{opt.label}</span>
-            {opt.sublabel && (
-              <span style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>{opt.sublabel}</span>
-            )}
+            {opt.label}
           </button>
         )
       })}
@@ -192,100 +256,83 @@ function ToggleGroup<T extends string>({
   )
 }
 
-function Toggle({
-  value,
-  onChange,
-  label,
+function Card({
+  title,
+  subtitle,
+  children,
 }: {
-  value: boolean
-  onChange: (v: boolean) => void
-  label: string
+  title: string
+  subtitle?: string
+  children: React.ReactNode
 }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!value)}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        background: 'none',
-        border: 'none',
-        cursor: 'pointer',
-        padding: 0,
-        fontFamily: T.body,
-      }}
-    >
-      <div
-        style={{
-          width: 44,
-          height: 24,
-          borderRadius: 12,
-          backgroundColor: value ? C.accent : C.border,
-          position: 'relative',
-          transition: 'background 0.2s',
-          flexShrink: 0,
-        }}
-      >
-        <div
-          style={{
-            width: 18,
-            height: 18,
-            borderRadius: 9,
-            backgroundColor: '#fff',
-            position: 'absolute',
-            top: 3,
-            left: value ? 23 : 3,
-            transition: 'left 0.2s',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
-          }}
-        />
-      </div>
-      <span style={{ fontSize: 14, color: C.textMain, fontWeight: value ? 600 : 400 }}>
-        {label}
-      </span>
-    </button>
-  )
-}
-
-function Card({ children, title }: { children: React.ReactNode; title?: string }) {
   return (
     <div
       style={{
         backgroundColor: C.card,
-        border: `1.5px solid ${C.border}`,
         borderRadius: 14,
-        padding: '20px 20px',
-        marginBottom: 16,
+        border: `1px solid ${C.border}`,
+        padding: '24px 24px 8px',
+        marginBottom: 20,
+        boxShadow: '0 2px 12px rgba(124,58,237,0.04)',
       }}
     >
-      {title && (
-        <p
+      <div style={{ marginBottom: 18 }}>
+        <h3
           style={{
-            fontSize: 11,
-            fontWeight: 700,
-            letterSpacing: '0.1em',
-            textTransform: 'uppercase',
-            color: C.textMuted,
-            marginBottom: 14,
-            fontFamily: T.body,
+            fontSize: 16,
+            fontWeight: 800,
+            color: C.textMain,
+            fontFamily: T.heading,
+            margin: 0,
           }}
         >
           {title}
-        </p>
-      )}
+        </h3>
+        {subtitle && (
+          <p style={{ fontSize: 12, color: C.textMuted, marginTop: 3 }}>{subtitle}</p>
+        )}
+      </div>
       {children}
     </div>
   )
 }
 
 function Divider() {
-  return <div style={{ borderTop: `1px solid ${C.border}`, margin: '20px 0' }} />
+  return (
+    <div
+      style={{
+        height: 1,
+        backgroundColor: C.border,
+        margin: '16px 0',
+      }}
+    />
+  )
+}
+
+function InfoBox({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        backgroundColor: C.accentLight,
+        border: `1px solid #DDD6FE`,
+        borderRadius: 10,
+        padding: '12px 16px',
+        fontSize: 13,
+        color: C.accent,
+        lineHeight: 1.6,
+        marginBottom: 16,
+      }}
+    >
+      {children}
+    </div>
+  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SECTION 3 — STEP COMPONENTS
+// סעיף 3 — שלבי תוכן
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── שלב 1: פרטים אישיים ──────────────────────────────────────────────────
 
 function StepPersonal({
   data,
@@ -294,28 +341,20 @@ function StepPersonal({
   data: TaxDataInput
   update: <K extends keyof TaxDataInput>(key: K, value: TaxDataInput[K]) => void
 }) {
-  // Children management
-  const addChild = () =>
-    update('childrenAges', [...data.childrenAges, 0])
-  const removeChild = (i: number) =>
-    update('childrenAges', data.childrenAges.filter((_, idx) => idx !== i))
-  const setChildAge = (i: number, age: number) =>
-    update(
-      'childrenAges',
-      data.childrenAges.map((a, idx) => (idx === i ? age : a)),
-    )
-
   return (
     <div>
-      <Card title="Taxpayer Profile">
-        <FieldGroup label="Gender" hint="Affects base credit points (2.25 for men, 2.75 for women)">
-          <ToggleGroup<Gender>
-            options={[
-              { value: 'male', label: '🧔 Male', sublabel: '2.25 pts' },
-              { value: 'female', label: '👩 Female', sublabel: '2.75 pts' },
-            ]}
+      <Card title="פרטי הנישום" subtitle="קובע את נקודות הזיכוי הבסיסיות">
+        <FieldGroup
+          label="מין הנישום"
+          hint="גבר: 2.25 נקודות זיכוי. אישה: 2.75 נקודות זיכוי (כולל 0.5 נקודה נוספת לאישה)."
+        >
+          <RadioGroup<Gender>
             value={data.gender}
             onChange={(v) => update('gender', v)}
+            options={[
+              { value: 'male',   label: 'גבר' },
+              { value: 'female', label: 'אישה' },
+            ]}
           />
         </FieldGroup>
 
@@ -324,141 +363,155 @@ function StepPersonal({
         <Toggle
           value={data.isSingleParent}
           onChange={(v) => update('isSingleParent', v)}
-          label="Single Parent (not cohabiting) — +1 credit point"
+          label="הורה יחידני (קוד 026) — נקודת זיכוי נוספת"
         />
-      </Card>
 
-      <Card title="Children">
-        <p style={{ fontSize: 13, color: C.textMuted, marginBottom: 12 }}>
-          Each child's age determines credit points. Children aged 0–18 may qualify. Add
-          each child separately.
-        </p>
-
-        {data.childrenAges.length === 0 ? (
-          <p style={{ fontSize: 13, color: C.textMuted, fontStyle: 'italic', marginBottom: 12 }}>
-            No children added yet.
-          </p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-            {data.childrenAges.map((age, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span
-                  style={{
-                    fontSize: 13,
-                    color: C.textMuted,
-                    minWidth: 64,
-                    fontFamily: T.body,
-                  }}
-                >
-                  Child {i + 1}
-                </span>
-                <div style={{ flex: 1 }}>
-                  <NumberInput
-                    value={age}
-                    onChange={(v) => setChildAge(i, Math.max(0, Math.floor(v)))}
-                    placeholder="Age (0–18)"
-                    prefix="age"
-                    min={0}
-                    step={1}
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeChild(i)}
-                  style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: 6,
-                    border: `1px solid ${C.border}`,
-                    background: C.dangerBg,
-                    color: C.danger,
-                    cursor: 'pointer',
-                    fontSize: 16,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0,
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <button
-          type="button"
-          onClick={addChild}
-          style={{
-            padding: '8px 16px',
-            borderRadius: 8,
-            border: `1.5px dashed ${C.accent}`,
-            background: C.accentLight,
-            color: C.accent,
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: 'pointer',
-            fontFamily: T.body,
-          }}
-        >
-          + Add Child
-        </button>
-
-        {data.childrenAges.length > 0 && (
-          <>
-            <Divider />
-            <FieldGroup
-              label="Disabled Children (Codes 131 / 023)"
-              hint="2 extra credit points per child. Subject to household income limits."
-            >
-              <NumberInput
-                value={data.disabledChildrenCount131_023}
-                onChange={(v) =>
-                  update('disabledChildrenCount131_023', Math.max(0, Math.floor(v)))
-                }
-                placeholder="0"
-                prefix="#"
-                min={0}
-              />
-            </FieldGroup>
-
-            {data.disabledChildrenCount131_023 > 0 && (
-              <FieldGroup
-                label="Total Household Income (for disabled-child limit check)"
-                hint={`Limit: ₪301,000 (couple) or ₪188,000 (single parent). Credit disallowed if exceeded.`}
-              >
-                <NumberInput
-                  value={data.totalHouseholdIncomeForDisabledChild}
-                  onChange={(v) => update('totalHouseholdIncomeForDisabledChild', v)}
-                />
-              </FieldGroup>
-            )}
-          </>
-        )}
-      </Card>
-
-      <Card title="Disability / Blindness Exemption (Codes 109 / 309)">
         <Toggle
-          value={data.isFullDisability}
-          onChange={(v) => update('isFullDisability', v)}
-          label="100% disability or blindness — personal income up to ₪445,200 exempt"
+          value={data.isIsraeliResident}
+          onChange={(v) => update('isIsraeliResident', v)}
+          label="תושב/ת ישראל — זכאי/ת לנקודת זיכוי לנסיעה לעבודה (0.25)"
         />
-        {data.isFullDisability && (
-          <div style={{ marginTop: 12 }}>
-            <Toggle
-              value={data.isModDefenseOrTerrorVictim}
-              onChange={(v) => update('isModDefenseOrTerrorVictim', v)}
-              label="MoD / Terror victim — exemption ceiling raised to ₪684,000"
+      </Card>
+
+      {/* ילדים */}
+      <Card title="ילדים" subtitle="גילאי הילדים נכון לשנת המס 2025">
+        <FieldGroup
+          label="גילאי הילדים (מופרדים בפסיק)"
+          hint="לדוגמה: 0, 3, 7, 14 — כל גיל מחושב לפי טבלת נקודות הזיכוי המתאימה."
+        >
+          <input
+            dir="ltr"
+            type="text"
+            placeholder="לדוגמה: 2, 5, 10"
+            defaultValue={data.childrenAges.join(', ')}
+            onBlur={(e) => {
+              const ages = e.target.value
+                .split(',')
+                .map((s) => parseInt(s.trim(), 10))
+                .filter((n) => !isNaN(n) && n >= 0)
+              update('childrenAges', ages)
+            }}
+            style={{
+              width: '100%',
+              padding: '10px 12px',
+              borderRadius: 8,
+              border: `1.5px solid ${C.border}`,
+              backgroundColor: C.inputBg,
+              fontSize: 14,
+              fontFamily: T.body,
+              color: C.textMain,
+              outline: 'none',
+              textAlign: 'left',
+            }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = C.borderFocus)}
+            onBlur_={(e) => (e.currentTarget.style.borderColor = C.border)}
+          />
+        </FieldGroup>
+
+        <FieldGroup
+          label="מספר ילדים עם מוגבלות (קודים 131 / 023)"
+          hint="2 נקודות זיכוי לכל ילד. מוגבל בתקרת הכנסה: מעל ₪301,000 (זוג) / ₪188,000 (יחיד) — אין זיכוי."
+        >
+          <NumberInput
+            value={data.disabledChildrenCount131_023}
+            onChange={(v) => update('disabledChildrenCount131_023', Math.round(v))}
+            suffix=""
+            placeholder="0"
+          />
+        </FieldGroup>
+      </Card>
+
+      {/* שירות צבאי ולימודים */}
+      <Card title="שחרור מצה״ל ותואר אקדמי" subtitle="זיכויים זמניים מבוססי תקופה">
+        <FieldGroup
+          label="סוג שירות צבאי (קודים 324 / 224 / 124 / 024)"
+          hint="תקף עד 36 חודשים ממועד השחרור. שירות מלא (גבר 23+ חודשים / אישה 22+): 1/6 נקודה לחודש. שירות חלקי: 1/12 נקודה לחודש."
+        >
+          <RadioGroup<SoldierServiceType>
+            value={data.dischargedSoldierService}
+            onChange={(v) => update('dischargedSoldierService', v)}
+            options={[
+              { value: 'none',    label: 'לא רלוונטי' },
+              { value: 'partial', label: 'שירות חלקי' },
+              { value: 'full',    label: 'שירות מלא' },
+            ]}
+          />
+        </FieldGroup>
+
+        {data.dischargedSoldierService !== 'none' && (
+          <FieldGroup
+            label="מספר חודשים שחלפו ממועד השחרור (עד 36 חודשים)"
+            hint="טווח תקף: 1–36 חודשים."
+          >
+            <NumberInput
+              value={data.dischargedSoldierMonthsElapsed}
+              onChange={(v) => update('dischargedSoldierMonthsElapsed', Math.round(Math.min(36, Math.max(0, v))))}
+              suffix=""
+              placeholder="0"
             />
-          </div>
+          </FieldGroup>
+        )}
+
+        <Divider />
+
+        <FieldGroup
+          label="תואר אקדמי (קודים 181 / 182)"
+          hint="תואר ראשון: 1 נקודה לשנה (עד 3 שנים). תואר שני: 0.5 נקודה לשנה (עד 2 שנים). מד״ר / רפואה: ראשון ואז שני."
+        >
+          <RadioGroup<AcademicDegreeType>
+            value={data.academicDegreeType}
+            onChange={(v) => update('academicDegreeType', v)}
+            options={[
+              { value: 'none',   label: 'ללא תואר' },
+              { value: 'ba',     label: 'תואר ראשון (B.A)' },
+              { value: 'ma',     label: 'תואר שני (M.A)' },
+              { value: 'phd_md', label: 'דוקטורט / רפואה' },
+            ]}
+          />
+        </FieldGroup>
+
+        {data.academicDegreeType !== 'none' && (
+          <FieldGroup
+            label="מספר שנות לימוד שחלפו מאז הסיום (שנת הסיום + 1)"
+            hint="הזיכוי מתחיל בשנה שלאחר הסיום."
+          >
+            <NumberInput
+              value={data.academicDegreeYearsElapsed}
+              onChange={(v) => update('academicDegreeYearsElapsed', Math.round(v))}
+              suffix=""
+              placeholder="0"
+            />
+          </FieldGroup>
+        )}
+      </Card>
+
+      {/* עולה חדש */}
+      <Card title="עולה חדש" subtitle="זיכוי מס לפי חוק עידוד עלייה">
+        <Toggle
+          value={data.isOlehChadash}
+          onChange={(v) => update('isOlehChadash', v)}
+          label="עולה חדש — זכאי/ת לזיכוי מס בשנות קליטה"
+        />
+        {data.isOlehChadash && (
+          <FieldGroup
+            label="מספר חודשים שחלפו מאז העלייה"
+            hint="טווח תקף: 1–54 חודשים (4.5 שנות הקליטה)."
+          >
+            <NumberInput
+              value={data.olehChadashMonthsElapsed}
+              onChange={(v) =>
+                update('olehChadashMonthsElapsed', Math.round(Math.min(54, Math.max(0, v))))}
+              suffix=""
+              placeholder="0"
+            />
+          </FieldGroup>
         )}
       </Card>
     </div>
   )
 }
 
-// ── Step 2: Income ─────────────────────────────────────────────────────────
+// ── שלב 2: הכנסות ─────────────────────────────────────────────────────────
 
 function StepIncome({
   data,
@@ -474,98 +527,97 @@ function StepIncome({
 
   return (
     <div>
-      <Card title="Employment Income (Progressive Brackets)">
+      <InfoBox>
+        💡 הזינו את הסכומים השנתיים ברוטו כפי שמופיעים בטופס 106 שקיבלתם ממעסיקיכם.
+        כל הערכים בשקלים חדשים (₪).
+      </InfoBox>
+
+      {/* הכנסת עבודה */}
+      <Card title="הכנסות מעבודה ועסק" subtitle="הכנסה מיגיעה אישית — ממוסה בשיעורי מס שולי">
         <FieldGroup
-          label="Salary — Registered Spouse (Code 158)"
-          hint="Main salary income from Form 106"
+          label="הכנסה ברוטו (קוד 158)"
+          hint="סך המשכורת הגולמית השנתית של הנישום המדווח — כולל בונוסים ותשלומים נוספים."
         >
-          <NumberInput value={data.grossIncome158} onChange={n('grossIncome158')} />
+          <NumberInput value={data.grossSalary158} onChange={n('grossSalary158')} />
         </FieldGroup>
 
         <FieldGroup
-          label="Salary — Unregistered Spouse (Code 172)"
-          hint="If you are registered as an unregistered spouse"
+          label="הכנסה ברוטו — בן/בת זוג לא מדווח/ת (קוד 172)"
+          hint="הכנסת בן/בת הזוג שאינו/ה מגיש/ה דוח נפרד. משפיעה על חישוב הכנסה משפחתית כוללת."
         >
-          <NumberInput value={data.grossIncome172} onChange={n('grossIncome172')} />
+          <NumberInput value={data.grossSalary172} onChange={n('grossSalary172')} />
         </FieldGroup>
 
         <FieldGroup
-          label="Other Personal-Exertion Income (Codes 150 / 170)"
-          hint="Author, lecturer, director fees, etc."
+          label="הכנסות אחרות מיגיעה אישית (קודים 150 / 170)"
+          hint="הכנסות ממחבר, מרצה, דירקטור וכד׳ — הכנסה שאינה ממשכורת רגילה."
         >
-          <NumberInput
-            value={data.otherPersonalIncome150_170}
-            onChange={n('otherPersonalIncome150_170')}
-          />
+          <NumberInput value={data.otherPersonalExertionIncome150_170} onChange={n('otherPersonalExertionIncome150_170')} />
         </FieldGroup>
 
         <FieldGroup
-          label="Taxable Severance / Pension Lump Sum (Codes 258 / 272)"
-          hint="Capped at 40% effective rate if total gross income < ₪560,280"
+          label="מענקי פרישה / פנסיה חייבים במס (קודים 258 / 272)"
+          hint="כפוף לתקרת מס אפקטיבי של 40% כאשר סך ההכנסה הגולמית נמוכה מ-₪560,280."
         >
-          <NumberInput
-            value={data.severancePension258_272}
-            onChange={n('severancePension258_272')}
-          />
+          <NumberInput value={data.severancePension258_272} onChange={n('severancePension258_272')} />
         </FieldGroup>
 
         <FieldGroup
-          label="Bituach Leumi Benefits (Codes 250 / 270 / 194 / 196)"
-          hint="Maternity, reserve duty, unemployment payments"
+          label="גמלאות ביטוח לאומי חייבות במס (קודים 250 / 270 / 194 / 196)"
+          hint="דמי לידה, מילואים, דמי אבטלה — הסכום החייב במס כפי שדווח על ידי ביטוח לאומי."
         >
-          <NumberInput
-            value={data.bituachLeumiIncome250_270_194_196}
-            onChange={n('bituachLeumiIncome250_270_194_196')}
-          />
+          <NumberInput value={data.bituachLeumiTaxableBenefits250_270} onChange={n('bituachLeumiTaxableBenefits250_270')} />
         </FieldGroup>
       </Card>
 
-      <Card title="Capital & Passive Income (Flat Rates)">
-        <FieldGroup label="Residential Rent (Code 222) — 10% flat" hint="Rent from residential property">
+      {/* הכנסות הון */}
+      <Card title="הכנסות הון ורכוש" subtitle="ממוסות בשיעורי מס קבועים — ללא מדרגות מס">
+        <FieldGroup
+          label="דמי שכירות מדירת מגורים (קוד 222)"
+          hint="שיעור מס קבוע: 10%. מגבלות תחולה — ראו הנחיות פקיד השומה."
+        >
           <NumberInput value={data.residentialRentIncome222} onChange={n('residentialRentIncome222')} />
         </FieldGroup>
 
         <FieldGroup
-          label="Interest / Dividends (Code 060) — 15% flat"
-          hint="Bank savings, certain dividends"
+          label="ריבית / דיבידנד — שיעור 15% (קוד 060)"
+          hint="ריבית על פיקדונות בנקאיים ודיבידנד ממניות בישראל — שיעור מס 15%."
         >
           <NumberInput value={data.interestDividends060} onChange={n('interestDividends060')} />
         </FieldGroup>
 
         <FieldGroup
-          label="Interest / Dividends (Codes 067 / 126) — 20% flat"
-          hint="Real dividends, certain bond interest"
+          label="ריבית / דיבידנד — שיעור 20% (קודים 067 / 126)"
+          hint="שיעור מס 20%."
         >
-          <NumberInput
-            value={data.interestDividends067_126}
-            onChange={n('interestDividends067_126')}
-          />
+          <NumberInput value={data.interestDividends067_126} onChange={n('interestDividends067_126')} />
         </FieldGroup>
 
         <FieldGroup
-          label="Interest / Dividends (Codes 157 / 141 / 142) — 25% flat"
-          hint="Mutual funds, certain investment dividends"
+          label="ריבית / דיבידנד — שיעור 25% (קודים 157 / 141 / 142)"
+          hint="שיעור מס 25%."
         >
-          <NumberInput
-            value={data.interestDividends157_141_142}
-            onChange={n('interestDividends157_141_142')}
-          />
+          <NumberInput value={data.interestDividends157_141_142} onChange={n('interestDividends157_141_142')} />
         </FieldGroup>
 
-        <FieldGroup label="Interest (Code 050) — 35% flat" hint="Certain bonds and savings">
+        <FieldGroup
+          label="ריבית — שיעור 35% (קוד 050)"
+          hint="שיעור מס 35%."
+        >
           <NumberInput value={data.interest050} onChange={n('interest050')} />
         </FieldGroup>
 
         <FieldGroup
-          label="Renewable Energy Rent (Code 335)"
-          hint="First ₪5,000 exempt; remainder taxed at 31%"
+          label="הכנסה מייצור חשמל מאנרגיה מתחדשת (קוד 335)"
+          hint="סכום ראשון עד ₪25,200 — פטור ממס. היתרה ממוסה בשיעור 31%."
         >
           <NumberInput value={data.renewableEnergyRent335} onChange={n('renewableEnergyRent335')} />
         </FieldGroup>
 
         <FieldGroup
-          label="Gambling / Lotteries / Prizes (Code 227)"
-          hint="⚠ No flat rate specified in 2025 rules — recorded for reference only, excluded from tax"
+          label="הימורים, הגרלות ופרסים (קוד 227)"
+          hint="⚠️ שיעור מס לא מוגדר בכללי 2025 — מוזן לצרכי תיעוד בלבד, לא נכלל בחישוב."
+          warn
         >
           <NumberInput
             value={data.gamblingLotteryIncome227}
@@ -577,7 +629,7 @@ function StepIncome({
   )
 }
 
-// ── Step 3: Deductions & Credits ───────────────────────────────────────────
+// ── שלב 3: ניכויים וזיכויים ───────────────────────────────────────────────
 
 function StepDeductionsCredits({
   data,
@@ -593,11 +645,14 @@ function StepDeductionsCredits({
 
   return (
     <div>
-      {/* Deductions */}
-      <Card title="Deductions — Reduce Taxable Income (§5)">
+      {/* ניכויים */}
+      <Card
+        title="ניכויים מהכנסה חייבת (§5)"
+        subtitle="מפחיתים את ההכנסה החייבת לפני חישוב המס"
+      >
         <FieldGroup
-          label="Loss-of-Earning-Capacity Insurance Premium (Codes 112 / 113)"
-          hint="Max deduction: 3.5% of salary (salary capped at ₪376,080). Reduced or eliminated by employer pension > 4%."
+          label="פרמיית ביטוח אובדן כושר עבודה (קודים 112 / 113)"
+          hint="ניכוי מקסימלי: 3.5% מהמשכורת, עד משכורת של ₪376,080. מצטמצם או מתאפס לפי שיעור הפרשת מעביד לפנסיה."
         >
           <NumberInput
             value={data.lossOfEarningPremium112_113}
@@ -607,33 +662,37 @@ function StepDeductionsCredits({
 
         {data.lossOfEarningPremium112_113 > 0 && (
           <FieldGroup
-            label="Employer Pension Contribution %"
-            hint="If > 7.5%, the loss-of-earning deduction is fully disallowed."
+            label="אחוז הפרשת מעביד לפנסיה (%)"
+            hint="מעל 7.5% — הניכוי לביטוח אובדן כושר עבודה מתאפס לחלוטין."
           >
             <NumberInput
-              value={data.employerPensionContributionPct}
-              onChange={n('employerPensionContributionPct')}
-              placeholder="0"
-              prefix="%"
+              value={data.employerPensionContributionPercent}
+              onChange={n('employerPensionContributionPercent')}
+              suffix="%"
               min={0}
-              step={0.5}
+              step={0.1}
+              placeholder="0.0"
             />
           </FieldGroup>
         )}
 
+        <Divider />
+
         <FieldGroup
-          label="Provident Fund / Pension as Independent (Codes 135 / 180)"
-          hint="Capped at 11% of salary or ₪11,880 (whichever is lower)"
+          label="קרן פנסיה / קופת גמל כעצמאי (קודים 135 / 180)"
+          hint="ניכוי עד 11% מההכנסה. תקרת ניכוי: ₪11,880 בשנת 2025."
         >
           <NumberInput
-            value={data.providentFundPension135_180}
-            onChange={n('providentFundPension135_180')}
+            value={data.providentFundIndependent135_180}
+            onChange={n('providentFundIndependent135_180')}
           />
         </FieldGroup>
 
+        <Divider />
+
         <FieldGroup
-          label="Bituach Leumi Payments as Independent (Codes 030 / 089)"
-          hint="52% of these payments are deductible (excluding fines and health tax)"
+          label="תשלומי ביטוח לאומי כעצמאי (קודים 030 / 089)"
+          hint="52% מהסכום ששולם (לא כולל קנסות ודמי ביטוח בריאות) מותרים בניכוי."
         >
           <NumberInput
             value={data.bituachLeumiIndependent030_089}
@@ -642,112 +701,32 @@ function StepDeductionsCredits({
         </FieldGroup>
       </Card>
 
-      {/* Discharged Soldier */}
-      <Card title="Discharged Soldier Credit (Codes 324 / 224 / 124 / 024)">
-        <FieldGroup label="Service Type" hint="Valid for 36 months from discharge">
-          <ToggleGroup<SoldierServiceType>
-            options={[
-              { value: 'none', label: 'None' },
-              { value: 'full', label: 'Full Service', sublabel: '23+ / 22+ mo.' },
-              { value: 'partial', label: 'Partial', sublabel: '< threshold' },
-            ]}
-            value={data.soldierServiceType}
-            onChange={(v) => update('soldierServiceType', v)}
-          />
-        </FieldGroup>
-
-        {data.soldierServiceType !== 'none' && (
-          <FieldGroup
-            label="Months Since Discharge"
-            hint="Credit expires after 36 months"
-          >
-            <NumberInput
-              value={data.monthsSinceDischarge}
-              onChange={n('monthsSinceDischarge')}
-              placeholder="0"
-              prefix="mo"
-              min={0}
-            />
-          </FieldGroup>
-        )}
-      </Card>
-
-      {/* Academic Degree */}
-      <Card title="Academic Degree Credit (Codes 181 / 182)">
+      {/* זיכויים */}
+      <Card
+        title="זיכויים מיוחדים (§6)"
+        subtitle="מפחיתים את המס המחושב בפועל"
+      >
         <FieldGroup
-          label="Degree Type"
-          hint="Credit starts the year AFTER graduation"
-        >
-          <ToggleGroup<AcademicDegreeType>
-            options={[
-              { value: 'none', label: 'None' },
-              { value: 'ba', label: "BA / Certificate", sublabel: '1 pt/yr, 3 yrs' },
-              { value: 'ma', label: "MA", sublabel: '0.5 pt/yr, 2 yrs' },
-              { value: 'phd_md', label: "PhD / MD", sublabel: 'BA then MA' },
-            ]}
-            value={data.academicDegree.type}
-            onChange={(v) =>
-              update('academicDegree', { ...data.academicDegree, type: v })
-            }
-          />
-        </FieldGroup>
-
-        {data.academicDegree.type !== 'none' && (
-          <FieldGroup
-            label="Years Since Graduation (post-graduation years used)"
-            hint="0 = first eligible year (the year after graduating)"
-          >
-            <NumberInput
-              value={data.academicDegree.yearsActive}
-              onChange={(v) =>
-                update('academicDegree', {
-                  ...data.academicDegree,
-                  yearsActive: Math.max(0, Math.floor(v)),
-                })
-              }
-              placeholder="0"
-              prefix="yr"
-              min={0}
-            />
-          </FieldGroup>
-        )}
-      </Card>
-
-      {/* Oleh Chadash */}
-      <Card title="New Immigrant Credit — Oleh Chadash (§6)">
-        <FieldGroup
-          label="Months Elapsed Since Immigration"
-          hint="Valid for 54 months after arrival (for immigrants arriving after 01.01.2025). Set to 0 if not applicable."
-        >
-          <NumberInput
-            value={data.olehChadashMonthsElapsed}
-            onChange={n('olehChadashMonthsElapsed')}
-            placeholder="0"
-            prefix="mo"
-            min={0}
-          />
-        </FieldGroup>
-      </Card>
-
-      {/* Donations */}
-      <Card title="Special Direct Credits (§6)">
-        <FieldGroup
-          label="Donations — Section 46 (Codes 037 / 237)"
-          hint="Minimum ₪207. Credit = 35% of qualifying amount, capped at 30% of taxable income."
+          label="תרומות לפי סעיף 46 (קודים 037 / 237)"
+          hint="מינימום תרומה: ₪207. זיכוי מס ישיר: 35% מסכום התרומה. תקרה: 30% מההכנסה החייבת או ₪10,354,846."
         >
           <NumberInput value={data.donations037_237} onChange={n('donations037_237')} />
         </FieldGroup>
 
+        <Divider />
+
         <FieldGroup
-          label="Shift Work Income in Industry (Codes 068 / 069)"
-          hint="15% credit; income capped at ₪143,040; max credit ₪12,540"
+          label="הכנסה ממשמרות בתעשייה (קודים 068 / 069)"
+          hint="זיכוי מס ישיר: 15% מהכנסת המשמרות. הכנסה מקסימלית לחישוב: ₪143,040. זיכוי מקסימלי: ₪12,540."
         >
           <NumberInput value={data.shiftWorkIncome068_069} onChange={n('shiftWorkIncome068_069')} />
         </FieldGroup>
 
+        <Divider />
+
         <FieldGroup
-          label="Institution Maintenance Expenses (Codes 132 / 232)"
-          hint="35% credit on expenses exceeding 12.5% of taxable income. Cannot combine with disabled-child credit."
+          label="הוצאות החזקת קרוב מוסד (קודים 132 / 232)"
+          hint="זיכוי של 35% על ההוצאות שמעל 12.5% מההכנסה החייבת. אינו מצטבר עם זיכוי ילד נכה."
         >
           <NumberInput
             value={data.institutionMaintenanceExpenses132_232}
@@ -755,16 +734,18 @@ function StepDeductionsCredits({
           />
         </FieldGroup>
 
+        <Divider />
+
         <FieldGroup
-          label="Life Insurance Premium — Risk Component (Codes 036 / 081)"
-          hint="25% direct credit on risk portion of premium"
+          label="פרמיית ביטוח חיים — מרכיב סיכון (קודים 036 / 081)"
+          hint="זיכוי מס ישיר: 25% מהפרמיה ששולמה (מרכיב הסיכון בלבד)."
         >
           <NumberInput value={data.lifeInsurancePremium036_081} onChange={n('lifeInsurancePremium036_081')} />
         </FieldGroup>
 
         <FieldGroup
-          label="Pension / Survivors Insurance (Codes 140 / 240 / 045 / 086)"
-          hint="35% direct credit on payments"
+          label="ביטוח פנסיוני / שאירים (קודים 140 / 240 / 045 / 086)"
+          hint="זיכוי מס ישיר: 35% מהסכום ששולם."
         >
           <NumberInput
             value={data.pensionSurvivorsInsurance140_240}
@@ -773,19 +754,19 @@ function StepDeductionsCredits({
         </FieldGroup>
       </Card>
 
-      {/* Location-based credits */}
-      <Card title="Location & Employment Credits">
+      {/* זיכויים גיאוגרפיים */}
+      <Card title="זיכויים לפי מיקום ותעסוקה">
         <Toggle
           value={data.isEilatResident}
           onChange={(v) => update('isEilatResident', v)}
-          label="Eilat Resident — 10% credit on Eilat income (Codes 139 / 183)"
+          label="תושב/ת אילת — זיכוי 10% על הכנסה מיגיעה אישית (קודים 139 / 183)"
         />
 
         {data.isEilatResident && (
           <div style={{ marginTop: 12 }}>
             <FieldGroup
-              label="Personal-Exertion Income Earned in Eilat"
-              hint="Income capped at ₪268,560 for credit calculation"
+              label="הכנסה מיגיעה אישית שהופקה באילת"
+              hint="הכנסה מוגבלת לחישוב עד ₪268,560."
             >
               <NumberInput
                 value={data.eilatIncome139_183}
@@ -798,8 +779,8 @@ function StepDeductionsCredits({
         <Divider />
 
         <FieldGroup
-          label="Security Forces — Activity Level A Salary"
-          hint="5% direct credit on salary; income capped at ₪178,320"
+          label="שכר כוחות הביטחון — רמת פעילות א׳"
+          hint="זיכוי מס ישיר: 5% על השכר. שכר מוגבל לחישוב עד ₪178,320."
         >
           <NumberInput
             value={data.securityForcesActivityASalary}
@@ -811,7 +792,7 @@ function StepDeductionsCredits({
   )
 }
 
-// ── Step 4: Withheld Tax ───────────────────────────────────────────────────
+// ── שלב 4: ניכוי מס במקור ─────────────────────────────────────────────────
 
 function StepWithheld({
   data,
@@ -827,59 +808,69 @@ function StepWithheld({
 
   return (
     <div>
-      <Card title="Tax Already Withheld at Source (ניכוי במקור)">
-        <p style={{ fontSize: 13, color: C.textMuted, marginBottom: 16, lineHeight: 1.6 }}>
-          Enter the amounts already deducted from your payments by employers or banks.
-          These reduce your final balance — overpayment results in a refund, underpayment
-          results in a debt.
-        </p>
+      <Card title="מס שנוכה במקור (ניכוי במקור)" subtitle="קודים 040 / 042 / 043">
+        <InfoBox>
+          💡 הזינו את סכומי המס שכבר נוכו מתשלומיכם על ידי המעסיק או הבנק.
+          סכומים אלו מפחיתים את היתרה הסופית — תשלום יתר מביא להחזר מס,
+          תשלום חסר יביא לחוב מס.
+        </InfoBox>
 
         <FieldGroup
-          label="Tax Withheld from Salary (Code 042)"
-          hint="Found on your Form 106 from your employer — look for code 042"
+          label="מס שנוכה במקור ממשכורת (קוד 042)"
+          hint="כפי שמופיע בשדה 042 בטופס 106 שקיבלתם מהמעסיק."
         >
           <NumberInput
-            value={data.withheldTaxSalary042}
-            onChange={n('withheldTaxSalary042')}
+            value={data.taxWithheldSalary042}
+            onChange={n('taxWithheldSalary042')}
           />
         </FieldGroup>
 
         <FieldGroup
-          label="Tax Withheld from Other Income (Code 040)"
-          hint="From Form 106 — code 040. Separate from salary withholding."
+          label="מס שנוכה במקור מהכנסות אחרות (קוד 040)"
+          hint="ניכוי מס ממשלמים אחרים שאינם המעסיק הראשי."
         >
           <NumberInput
-            value={data.withheldTaxOther040}
-            onChange={n('withheldTaxOther040')}
+            value={data.taxWithheldOther040}
+            onChange={n('taxWithheldOther040')}
           />
         </FieldGroup>
 
         <FieldGroup
-          label="Tax Withheld from Interest / Savings (Code 043)"
-          hint="From bank statements or Form 867 — code 043"
+          label="מס שנוכה במקור מריבית / פיקדונות (קוד 043)"
+          hint="ניכוי מס על ריבית בחשבונות בנק, פיקדונות ותוכניות חיסכון."
         >
           <NumberInput
-            value={data.withheldTaxInterest043}
-            onChange={n('withheldTaxInterest043')}
+            value={data.taxWithheldInterest043}
+            onChange={n('taxWithheldInterest043')}
           />
         </FieldGroup>
       </Card>
 
-      {/* Summary hint */}
+      {/* סיכום שלב */}
       <div
         style={{
-          background: 'linear-gradient(135deg, #EDE9FE 0%, #F5F3FF 100%)',
-          border: `1.5px solid #C4B5FD`,
+          backgroundColor: C.stepDoneBg,
           borderRadius: 14,
-          padding: '16px 18px',
+          padding: '20px 24px',
+          border: `1px solid ${C.stepDone}44`,
+          textAlign: 'center',
         }}
       >
-        <p style={{ fontSize: 13, color: '#5B21B6', fontWeight: 600, marginBottom: 4 }}>
-          ✓ All inputs collected
-        </p>
-        <p style={{ fontSize: 12, color: '#7C3AED', lineHeight: 1.5 }}>
-          Check the live summary panel on the right for your real-time tax calculation.
-          All computations follow the official 2025 Israel Tax Authority rules.
+        <div style={{ fontSize: 28, marginBottom: 8 }}>✅</div>
+        <h3
+          style={{
+            fontSize: 16,
+            fontWeight: 800,
+            color: C.stepDone,
+            fontFamily: T.heading,
+            marginBottom: 6,
+          }}
+        >
+          כל הנתונים הוזנו
+        </h3>
+        <p style={{ fontSize: 13, color: '#065F46', lineHeight: 1.6 }}>
+          בדקו את סיכום החישוב בפאנל השמאלי. כל החישובים מבוצעים לפי
+          כללי רשות המסים לשנת המס 2025.
         </p>
       </div>
     </div>
@@ -887,14 +878,14 @@ function StepWithheld({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SECTION 4 — WIZARD SHELL
+// סעיף 4 — מעטפת האשף
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STEPS = [
-  { id: 1, title: 'Your Profile',           subtitle: 'פרטים אישיים' },
-  { id: 2, title: 'Income',                 subtitle: 'הכנסות' },
-  { id: 3, title: 'Deductions & Credits',   subtitle: 'ניכויים וזיכויים' },
-  { id: 4, title: 'Tax Withheld',           subtitle: 'ניכוי במקור' },
+  { id: 1, title: 'פרטים אישיים',    subtitle: 'Your Profile' },
+  { id: 2, title: 'הכנסות',          subtitle: 'Income' },
+  { id: 3, title: 'ניכויים וזיכויים', subtitle: 'Deductions & Credits' },
+  { id: 4, title: 'ניכוי במקור',     subtitle: 'Tax Withheld' },
 ]
 
 export default function Wizard() {
@@ -910,12 +901,12 @@ export default function Wizard() {
       style={{
         fontFamily: T.body,
         maxWidth: 680,
-        marginLeft: 'auto',
-        marginRight: 'auto',
+        marginInlineStart: 'auto',
+        marginInlineEnd: 'auto',
       }}
     >
-      {/* ── Step indicator ────────────────────────────────────────────────── */}
-      <div style={{ marginBottom: 28 }}>
+      {/* ── מחוון שלבים ────────────────────────────────────────────────── */}
+      <div style={{ marginBottom: 32 }}>
         <div
           style={{
             display: 'flex',
@@ -924,31 +915,34 @@ export default function Wizard() {
             position: 'relative',
           }}
         >
-          {/* Progress line */}
+          {/* קו התקדמות רקע */}
           <div
             style={{
               position: 'absolute',
               top: 16,
-              left: 20,
-              right: 20,
+              insetInlineStart: 20,
+              insetInlineEnd: 20,
               height: 2,
               backgroundColor: C.border,
               zIndex: 0,
             }}
           />
+          {/* קו התקדמות פעיל */}
           <div
             style={{
               position: 'absolute',
               top: 16,
-              left: 20,
+              // In RTL, progress fills from the right
+              insetInlineEnd: 20,
               height: 2,
               width: `calc(${((step - 1) / (STEPS.length - 1)) * 100}% - 0px)`,
               backgroundColor: C.accent,
               zIndex: 1,
-              transition: 'width 0.3s ease',
+              transition: 'width 0.35s ease',
             }}
           />
 
+          {/* שלבים */}
           {STEPS.map((s) => {
             const isDone   = step > s.id
             const isActive = step === s.id
@@ -968,41 +962,39 @@ export default function Wizard() {
               >
                 <div
                   style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: 16,
-                    backgroundColor: isDone
-                      ? C.stepDone
-                      : isActive
-                        ? C.accent
-                        : C.card,
-                    border: `2px solid ${isDone ? C.stepDone : isActive ? C.accent : C.border}`,
+                    width: 34,
+                    height: 34,
+                    borderRadius: 17,
+                    backgroundColor: isDone ? C.stepDone : isActive ? C.accent : C.card,
+                    border: `2px solid ${
+                      isDone ? C.stepDone : isActive ? C.accent : C.border
+                    }`,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    fontSize: isDone ? 14 : 13,
-                    fontWeight: 700,
+                    fontSize: isDone ? 15 : 13,
+                    fontWeight: 800,
                     color: isDone || isActive ? '#fff' : C.textMuted,
                     transition: 'all 0.2s',
-                    boxShadow: isActive ? `0 0 0 4px ${C.accent}22` : 'none',
+                    boxShadow: isActive ? `0 0 0 5px ${C.accent}22` : 'none',
                   }}
                 >
                   {isDone ? '✓' : s.id}
                 </div>
                 <p
                   style={{
-                    fontSize: 11,
-                    fontWeight: isActive ? 700 : 400,
+                    fontSize: 12,
+                    fontWeight: isActive ? 800 : 500,
                     color: isActive ? C.accent : isDone ? C.textMain : C.textMuted,
-                    marginTop: 6,
+                    marginTop: 7,
                     textAlign: 'center',
                     lineHeight: 1.3,
-                    maxWidth: 80,
+                    maxWidth: 88,
                   }}
                 >
                   {s.title}
                 </p>
-                <p style={{ fontSize: 10, color: C.textMuted, marginTop: 1 }}>
+                <p style={{ fontSize: 10, color: C.textMuted, marginTop: 1, textAlign: 'center' }}>
                   {s.subtitle}
                 </p>
               </div>
@@ -1011,44 +1003,36 @@ export default function Wizard() {
         </div>
       </div>
 
-      {/* ── Step heading ──────────────────────────────────────────────────── */}
-      <div style={{ marginBottom: 20 }}>
+      {/* ── כותרת שלב ────────────────────────────────────────────────────── */}
+      <div style={{ marginBottom: 22 }}>
         <h2
           style={{
             fontSize: 26,
-            fontWeight: 800,
+            fontWeight: 900,
             color: C.textMain,
             fontFamily: T.heading,
             margin: 0,
-            letterSpacing: '-0.5px',
+            letterSpacing: '-0.4px',
           }}
         >
           {STEPS[step - 1].title}
         </h2>
         <p style={{ fontSize: 13, color: C.textMuted, marginTop: 4 }}>
-          Step {step} of {STEPS.length}
+          שלב {step} מתוך {STEPS.length}
           {' · '}
           {STEPS[step - 1].subtitle}
         </p>
       </div>
 
-      {/* ── Step content ──────────────────────────────────────────────────── */}
+      {/* ── תוכן השלב ─────────────────────────────────────────────────────── */}
       <div>
-        {step === 1 && (
-          <StepPersonal data={formData} update={updateField} />
-        )}
-        {step === 2 && (
-          <StepIncome data={formData} update={updateField} />
-        )}
-        {step === 3 && (
-          <StepDeductionsCredits data={formData} update={updateField} />
-        )}
-        {step === 4 && (
-          <StepWithheld data={formData} update={updateField} />
-        )}
+        {step === 1 && <StepPersonal data={formData} update={updateField} />}
+        {step === 2 && <StepIncome   data={formData} update={updateField} />}
+        {step === 3 && <StepDeductionsCredits data={formData} update={updateField} />}
+        {step === 4 && <StepWithheld data={formData} update={updateField} />}
       </div>
 
-      {/* ── Navigation ────────────────────────────────────────────────────── */}
+      {/* ── ניווט ──────────────────────────────────────────────────────────── */}
       <div
         style={{
           display: 'flex',
@@ -1059,6 +1043,7 @@ export default function Wizard() {
           borderTop: `1px solid ${C.border}`,
         }}
       >
+        {/* כפתורי ניווט לאחור + איפוס */}
         <div style={{ display: 'flex', gap: 8 }}>
           {!isFirst && (
             <button
@@ -1071,12 +1056,16 @@ export default function Wizard() {
                 backgroundColor: C.card,
                 color: C.textMain,
                 fontSize: 14,
-                fontWeight: 600,
+                fontWeight: 700,
                 cursor: 'pointer',
                 fontFamily: T.body,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
               }}
             >
-              ← Back
+              {/* חץ ימינה ב-RTL = חזרה */}
+              ← הקודם
             </button>
           )}
           <button
@@ -1093,10 +1082,11 @@ export default function Wizard() {
               fontFamily: T.body,
             }}
           >
-            Reset
+            אפס הכל
           </button>
         </div>
 
+        {/* כפתור קדימה / סיום */}
         {!isLast ? (
           <button
             type="button"
@@ -1108,11 +1098,14 @@ export default function Wizard() {
               background: `linear-gradient(135deg, ${C.accent} 0%, #A855F7 100%)`,
               color: '#fff',
               fontSize: 14,
-              fontWeight: 700,
+              fontWeight: 800,
               cursor: 'pointer',
               fontFamily: T.body,
-              boxShadow: '0 4px 12px rgba(124,58,237,0.35)',
+              boxShadow: '0 4px 14px rgba(124,58,237,0.35)',
               transition: 'transform 0.1s, box-shadow 0.1s',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
             }}
             onMouseDown={(e) => {
               ;(e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.97)'
@@ -1121,20 +1114,21 @@ export default function Wizard() {
               ;(e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'
             }}
           >
-            Next →
+            הבא →
           </button>
         ) : (
           <span
             style={{
               fontSize: 13,
               color: C.stepDone,
-              fontWeight: 600,
+              fontWeight: 700,
               background: C.stepDoneBg,
-              padding: '8px 14px',
+              padding: '9px 16px',
               borderRadius: 8,
+              border: `1px solid ${C.stepDone}44`,
             }}
           >
-            ✓ All steps complete — see summary →
+            ✓ כל השלבים הושלמו — ראו סיכום ←
           </span>
         )}
       </div>
